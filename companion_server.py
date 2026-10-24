@@ -1597,6 +1597,12 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
         self._send_security_headers()
         self.end_headers()
 
+    def do_HEAD(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self._send_security_headers()
+        self.end_headers()
+
     def do_GET(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
         path = parsed.path
