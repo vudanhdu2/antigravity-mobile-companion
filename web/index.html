@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Antigravity Mobile Companion — Self-Hosted (100% Privacy)</title>
+  <link rel="stylesheet" href="fonts/antigravity-fonts.css" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --font-sans: 'Google Sans', 'Google Sans Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      --font-mono: 'Google Sans Code', 'Google Sans', ui-monospace, SFMono-Regular, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: #090d16;
+      color: #f1f5f9;
+      font-size: 14px;
+    }
+    code, pre {
+      font-family: var(--font-mono);
+    }
+    .tabular-nums {
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+<body class="h-screen w-screen overflow-hidden flex flex-col select-none">
+  <!-- PIN Modal -->
+  <div id="pinModal" class="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md hidden items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4">
+      <div class="flex items-center gap-2.5">
+        <div class="w-10 h-10 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-lg">🔐</div>
+        <div>
+          <h2 class="text-base font-bold text-white">Khóa Bảo Mật Self-Host</h2>
+          <p class="text-xs text-slate-400">Nhập mã PIN 6 số hiển thị trên cửa sổ Terminal PC</p>
+        </div>
+      </div>
+      <input id="pinInput" type="password" inputmode="numeric" placeholder="Nhập mã PIN 6 số..."
+        class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-center text-base font-bold tracking-widest outline-none focus:border-indigo-500 tabular-nums" />
+      <p id="pinError" class="text-xs text-rose-400 hidden text-center"></p>
+      <button onclick="submitPin()" class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition-all">
+        Mở Khóa Kết Nối
+      </button>
+    </div>
+  </div>
+
+  <!-- QR & 4G/5G Cloudflare Tunnel Modal -->
+  <div id="qrModal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-5 shadow-2xl space-y-4 max-h-[92vh] overflow-y-auto">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div>
+          <h3 class="text-base font-bold text-white flex items-center gap-2">📱 Kết nối Điện thoại (Wi-Fi LAN & 4G/5G)</h3>
+          <p class="text-xs text-emerald-400 mt-0.5">🛡️ 100% Dữ liệu nằm trên ổ cứng máy PC của bạn</p>
+        </div>
+        <button onclick="toggleQrModal(false)" class="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 text-xs font-bold">Đóng</button>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <!-- Wi-Fi LAN Card -->
+        <div class="bg-slate-950/90 border border-slate-800 rounded-xl p-3.5 flex flex-col items-center text-center space-y-2">
+          <span class="px-2.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 text-xs font-bold">1. Chung mạng Wi-Fi LAN</span>
+          <img id="lanQrImg" class="w-36 h-36 rounded-lg bg-white p-1.5" alt="LAN QR" />
+          <input id="lanUrlText" readonly class="w-full px-2 py-1 rounded bg-slate-900 border border-slate-800 text-xs text-slate-300 text-center tabular-nums" />
+          <button onclick="copyInput('lanUrlText')" class="w-full py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white">📋 Copy Link LAN</button>
+        </div>
+
+        <!-- 4G/5G Cloudflare Tunnel Card -->
+        <div class="bg-slate-950/90 border border-indigo-500/30 rounded-xl p-3.5 flex flex-col items-center text-center space-y-2">
+          <span class="px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-bold">2. Qua 4G/5G (Cloudflare Tunnel)</span>
+          <div id="tunnelActiveBox" class="hidden flex-col items-center space-y-2 w-full">
+            <img id="tunnelQrImg" class="w-36 h-36 rounded-lg bg-white p-1.5 mx-auto" alt="4G QR" />
+            <input id="tunnelUrlText" readonly class="w-full px-2 py-1 rounded bg-slate-900 border border-slate-800 text-xs text-emerald-300 text-center tabular-nums" />
+            <div class="flex gap-1.5 w-full">
+              <button onclick="copyInput('tunnelUrlText')" class="flex-1 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white">📋 Copy Link 4G</button>
+              <button onclick="setTunnel(false)" class="px-2.5 py-1.5 rounded-lg bg-rose-600/20 text-rose-300 text-xs font-bold">Tắt</button>
+            </div>
+          </div>
+          <div id="tunnelInactiveBox" class="flex flex-col items-center justify-center py-6 space-y-3 w-full">
+            <p class="text-xs text-slate-400 leading-relaxed">Bật đường hầm Cloudflare miễn phí (kèm khóa PIN) để điều khiển máy tính ở nhà khi bạn đi ra ngoài bằng 4G/5G.</p>
+            <button id="btnEnableTunnel" onclick="setTunnel(true)" class="w-full py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-600 hover:opacity-95 text-xs font-bold text-white shadow">
+              🌐 Bật 4G/5G Cloudflare Tunnel
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center justify-between text-xs">
+        <span class="text-slate-400">Mã PIN Bảo Mật Hiện Tại:</span>
+        <span id="currentPinBadge" class="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-300 font-bold tracking-widest tabular-nums">------</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top Header -->
+  <header class="h-13 px-3 sm:px-4 py-2 bg-slate-900/95 border-b border-slate-800 flex items-center justify-between gap-2 shrink-0">
+    <div class="flex items-center gap-2 min-w-0">
+      <button onclick="toggleSidebar()" class="md:hidden px-2.5 py-1.5 rounded-lg bg-slate-800 text-slate-200 text-xs font-bold">☰ Phiên</button>
+      <div class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0"></div>
+      <div class="truncate">
+        <div class="text-xs sm:text-sm font-bold text-white truncate flex items-center gap-1.5">
+          <span>Antigravity Companion</span>
+          <span class="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 text-xs font-bold">Self-Host Bảo Mật</span>
+        </div>
+        <div id="hostSubtitle" class="text-xs text-slate-400 truncate">Đang kết nối máy PC...</div>
+      </div>
+    </div>
+    <div class="flex items-center gap-1.5 shrink-0">
+      <button onclick="openQrAndTunnel()" class="px-3 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 text-xs font-bold flex items-center gap-1.5">
+        <span>📱 QR & 4G/5G</span>
+      </button>
+      <button onclick="startNewConvMode()" class="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold">
+        + Giao việc mới
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Workspace -->
+  <div class="flex-1 flex overflow-hidden relative">
+    <!-- Left Sidebar -->
+    <aside id="sidebar" class="w-72 bg-slate-900 border-r border-slate-800 flex flex-col shrink-0 absolute md:static inset-y-0 left-0 z-30 -translate-x-full md:translate-x-0 transition-transform">
+      <div class="p-3 border-b border-slate-800 space-y-2">
+        <div class="text-xs font-bold text-slate-400 uppercase tracking-wider">Dự án (Project) trên PC</div>
+        <select id="projectSelect" onchange="renderConversations()" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-bold text-white outline-none"></select>
+      </div>
+      <div id="convList" class="flex-1 overflow-y-auto p-2 space-y-1"></div>
+    </aside>
+
+    <!-- Chat Area -->
+    <main class="flex-1 flex flex-col bg-slate-950 overflow-hidden">
+      <div id="messagesBox" class="flex-1 overflow-y-auto p-3 sm:p-5 space-y-3 select-text"></div>
+
+      <!-- Attachment Preview Bar -->
+      <div id="mediaPreviewBar" class="hidden px-4 py-2 bg-slate-900/90 border-t border-slate-800 flex-wrap gap-2 items-center"></div>
+
+      <!-- Composer -->
+      <div class="p-3 bg-slate-900 border-t border-slate-800 space-y-2">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <label class="cursor-pointer px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5">
+              <span>📎 Đính kèm Ảnh/File</span>
+              <input id="fileInput" type="file" multiple class="hidden" onchange="handleFilesSelected(event)" />
+            </label>
+            <select id="modelSelect" class="px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-bold text-slate-200 outline-none">
+              <option value="pro">Gemini 4 Argon / Claude Pro</option>
+              <option value="flash">Gemini 3.8 Flash (Nhanh)</option>
+            </select>
+          </div>
+          <span id="statusBadge" class="text-xs text-slate-400 tabular-nums">Sẵn sàng</span>
+        </div>
+        <div class="flex items-end gap-2">
+          <textarea id="promptInput" rows="2" placeholder="Nhập yêu cầu giao việc cho Antigravity trên PC (hỗ trợ dán ảnh Ctrl+V)..."
+            class="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white outline-none focus:border-indigo-500 resize-none"></textarea>
+          <button id="sendBtn" onclick="sendPrompt()" class="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shrink-0 h-10">
+            Gửi lệnh ➤
+          </button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const urlParams = new URLSearchParams(window.location.search);
+    let pinCode = urlParams.get('pin') || localStorage.getItem('ag_selfhost_pin') || '';
+    if (pinCode) localStorage.setItem('ag_selfhost_pin', pinCode);
+
+    let overviewData = null;
+    let activeCid = null;
+    let pendingMedia = [];
+
+    function authHeaders() {
+      return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + pinCode };
+    }
+
+    async function apiFetch(path, opts = {}) {
+      opts.headers = Object.assign(authHeaders(), opts.headers || {});
+      const res = await fetch(path, opts);
+      if (res.status === 401) {
+        document.getElementById('pinModal').classList.remove('hidden');
+        document.getElementById('pinModal').classList.add('flex');
+        throw new Error('Unauthorized');
+      }
+      return res.json();
+    }
+
+    async function submitPin() {
+      const val = document.getElementById('pinInput').value.trim();
+      if (!val) return;
+      pinCode = val;
+      localStorage.setItem('ag_selfhost_pin', pinCode);
+      try {
+        await loadOverview();
+        document.getElementById('pinModal').classList.add('hidden');
+      } catch (e) {
+        const err = document.getElementById('pinError');
+        err.textContent = 'Mã PIN không đúng, vui lòng kiểm tra trên cửa sổ Terminal PC.';
+        err.classList.remove('hidden');
+      }
+    }
+
+    function toggleSidebar() {
+      document.getElementById('sidebar').classList.toggle('-translate-x-full');
+    }
+
+    async function loadOverview() {
+      overviewData = await apiFetch('/api/ag-companion/overview');
+      const host = overviewData.host || {};
+      document.getElementById('hostSubtitle').textContent =
+        (host.online ? '🟢 Đang kết nối Antigravity Desktop • ' : '⚪ Chờ mở Antigravity Desktop • ') + (host.name || '');
+
+      const pSel = document.getElementById('projectSelect');
+      const prevProj = pSel.value;
+      pSel.innerHTML = '';
+      (overviewData.projects || []).forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = `${p.name} (${(p.conversations || []).length})`;
+        pSel.appendChild(opt);
+      });
+      if (prevProj && Array.from(pSel.options).some(o => o.value === prevProj)) {
+        pSel.value = prevProj;
+      }
+      renderConversations();
+      if (activeCid) {
+        await loadConversationDetail(activeCid);
+      }
+    }
+
+    function renderConversations() {
+      if (!overviewData) return;
+      const pid = document.getElementById('projectSelect').value;
+      const proj = (overviewData.projects || []).find(p => p.id === pid) || (overviewData.projects || [])[0];
+      const box = document.getElementById('convList');
+      box.innerHTML = '';
+      const convs = proj ? (proj.conversations || []) : [];
+      if (!activeCid && convs.length > 0) {
+        activeCid = convs[0].id;
+        loadConversationDetail(activeCid);
+      }
+      convs.forEach(c => {
+        const btn = document.createElement('button');
+        const isAct = c.id === activeCid;
+        btn.className = `w-full text-left p-2.5 rounded-xl transition-all flex flex-col gap-1 ${
+          isAct ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800 text-slate-300'
+        }`;
+        btn.onclick = () => {
+          activeCid = c.id;
+          renderConversations();
+          loadConversationDetail(c.id);
+          if (window.innerWidth < 768) toggleSidebar();
+        };
+        btn.innerHTML = `
+          <div class="text-xs font-bold truncate flex items-center justify-between gap-1">
+            <span class="truncate">${escapeHtml(c.title)}</span>
+            ${c.isRunning ? '<span class="w-2 h-2 rounded-full bg-amber-400 animate-ping shrink-0"></span>' : ''}
+          </div>
+          <div class="text-xs opacity-75 flex items-center justify-between tabular-nums">
+            <span>${c.stepCount || 0} bước</span>
+            <span>${escapeHtml(c.relativeTime || '')}</span>
+          </div>
+        `;
+        box.appendChild(btn);
+      });
+    }
+
+    async function loadConversationDetail(cid) {
+      const data = await apiFetch('/api/ag-companion/conversation/' + encodeURIComponent(cid));
+      const box = document.getElementById('messagesBox');
+      box.innerHTML = '';
+      document.getElementById('statusBadge').textContent = data.isRunning ? '⏳ Antigravity đang xử lý...' : '✅ Sẵn sàng';
+
+      (data.messages || []).forEach(m => {
+        const isUser = m.role === 'user';
+        const wrap = document.createElement('div');
+        wrap.className = `flex flex-col ${isUser ? 'items-end' : 'items-start'}`;
+
+        let mediaHtml = '';
+        if (Array.isArray(m.media) && m.media.length > 0) {
+          mediaHtml = '<div class="flex flex-wrap gap-2 mb-2">' + m.media.map(item => {
+            const u = (item.url || '') + (item.url && item.url.includes('?') ? '&' : '?') + 'pin=' + encodeURIComponent(pinCode);
+            if ((item.mimeType || '').startsWith('image/')) {
+              return `<a href="${u}" target="_blank"><img src="${u}" class="max-h-44 rounded-lg border border-white/20" /></a>`;
+            }
+            return `<a href="${u}" target="_blank" class="px-2.5 py-1 rounded bg-slate-800 text-xs underline">📄 ${escapeHtml(item.name || 'File')}</a>`;
+          }).join('') + '</div>';
+        }
+
+        let thoughtHtml = '';
+        if (m.thinking) {
+          thoughtHtml = `
+            <details class="mb-2 bg-slate-900/90 border border-slate-800 rounded-lg p-2 text-xs text-slate-400 w-full">
+              <summary class="cursor-pointer font-bold text-slate-300">💭 Suy nghĩ (${m.thinkingSeconds || 1}s)</summary>
+              <div class="mt-1.5 whitespace-pre-wrap">${escapeHtml(m.thinking)}</div>
+            </details>
+          `;
+        }
+
+        wrap.innerHTML = `
+          <div class="max-w-[88%] sm:max-w-[78%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+            isUser ? 'bg-indigo-600 text-white' : 'bg-slate-900 border border-slate-800 text-slate-100'
+          }">
+            ${mediaHtml}
+            ${thoughtHtml}
+            <div class="whitespace-pre-wrap break-words">${escapeHtml(m.content || '')}</div>
+          </div>
+        `;
+        box.appendChild(wrap);
+      });
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function startNewConvMode() {
+      activeCid = null;
+      document.getElementById('messagesBox').innerHTML = `
+        <div class="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400 space-y-2">
+          <div class="text-2xl">🚀</div>
+          <div class="text-sm font-bold text-white">Tạo phiên giao việc mới trên PC của bạn</div>
+          <p class="text-xs max-w-md">Nhập yêu cầu hoặc đính kèm hình ảnh/tài liệu bên dưới để khởi chạy trực tiếp trên cửa sổ Antigravity Desktop.</p>
+        </div>
+      `;
+      document.getElementById('promptInput').focus();
+    }
+
+    function handleFilesSelected(ev) {
+      const files = Array.from(ev.target.files || []);
+      files.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          pendingMedia.push({ name: file.name, mimeType: file.type || 'application/octet-stream', dataUrl: reader.result });
+          renderPendingMedia();
+        };
+        reader.readAsDataURL(file);
+      });
+      ev.target.value = '';
+    }
+
+    function renderPendingMedia() {
+      const bar = document.getElementById('mediaPreviewBar');
+      if (pendingMedia.length === 0) {
+        bar.classList.add('hidden');
+        bar.innerHTML = '';
+        return;
+      }
+      bar.classList.remove('hidden');
+      bar.classList.add('flex');
+      bar.innerHTML = pendingMedia.map((m, idx) => `
+        <div class="px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 text-xs flex items-center gap-2">
+          <span class="truncate max-w-[150px]">📎 ${escapeHtml(m.name)}</span>
+          <button onclick="pendingMedia.splice(${idx},1);renderPendingMedia()" class="text-rose-400 font-bold">✕</button>
+        </div>
+      `).join('');
+    }
+
+    async function sendPrompt() {
+      const input = document.getElementById('promptInput');
+      const text = input.value.trim();
+      if (!text && pendingMedia.length === 0) return;
+
+      const mediaToSend = [...pendingMedia];
+      pendingMedia = [];
+      renderPendingMedia();
+      input.value = '';
+
+      const projId = document.getElementById('projectSelect').value;
+      const model = document.getElementById('modelSelect').value;
+      document.getElementById('statusBadge').textContent = '🚀 Đang gửi lệnh...';
+
+      if (!activeCid) {
+        const res = await apiFetch('/api/ag-companion/new', {
+          method: 'POST',
+          body: JSON.stringify({ prompt: text, projectId: projId, model, media: mediaToSend })
+        });
+        if (res.conversationId) {
+          activeCid = res.conversationId;
+        }
+      } else {
+        await apiFetch('/api/ag-companion/send', {
+          method: 'POST',
+          body: JSON.stringify({ conversationId: activeCid, text, model, media: mediaToSend })
+        });
+      }
+      await loadOverview();
+    }
+
+    async function openQrAndTunnel() {
+      toggleQrModal(true);
+      const info = await apiFetch('/api/ag-companion/connection-info');
+      document.getElementById('currentPinBadge').textContent = info.pin || '';
+      document.getElementById('lanUrlText').value = info.lanUrl || '';
+      document.getElementById('lanQrImg').src =
+        'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(info.lanUrl || '');
+      updateTunnelUi(info.tunnelRunning, info.tunnelUrl);
+    }
+
+    function updateTunnelUi(running, tunnelUrl) {
+      const act = document.getElementById('tunnelActiveBox');
+      const inact = document.getElementById('tunnelInactiveBox');
+      if (running && tunnelUrl) {
+        act.classList.remove('hidden');
+        act.classList.add('flex');
+        inact.classList.add('hidden');
+        document.getElementById('tunnelUrlText').value = tunnelUrl;
+        document.getElementById('tunnelQrImg').src =
+          'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(tunnelUrl);
+      } else {
+        act.classList.add('hidden');
+        inact.classList.remove('hidden');
+      }
+    }
+
+    async function setTunnel(enable) {
+      const btn = document.getElementById('btnEnableTunnel');
+      if (btn) btn.textContent = '⏳ Đang mở đường hầm Cloudflare (5-10s)...';
+      const res = await apiFetch('/api/ag-companion/tunnel-toggle', {
+        method: 'POST',
+        body: JSON.stringify({ enable })
+      });
+      if (btn) btn.textContent = '🌐 Bật 4G/5G Cloudflare Tunnel';
+      updateTunnelUi(res.running, res.tunnelUrl);
+    }
+
+    function toggleQrModal(show) {
+      const m = document.getElementById('qrModal');
+      if (show) {
+        m.classList.remove('hidden');
+        m.classList.add('flex');
+      } else {
+        m.classList.add('hidden');
+      }
+    }
+
+    function copyInput(id) {
+      const el = document.getElementById(id);
+      navigator.clipboard.writeText(el.value || '');
+    }
+
+    function escapeHtml(s) {
+      return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    document.addEventListener('paste', ev => {
+      const items = Array.from((ev.clipboardData || {}).items || []);
+      items.forEach(item => {
+        if (item.type.startsWith('image/')) {
+          const f = item.getAsFile();
+          if (f) {
+            const reader = new FileReader();
+            reader.onload = () => {
+              pendingMedia.push({ name: f.name || 'clipboard.png', mimeType: f.type, dataUrl: reader.result });
+              renderPendingMedia();
+            };
+            reader.readAsDataURL(f);
+          }
+        }
+      });
+    });
+
+    loadOverview().catch(() => {});
+    setInterval(() => { loadOverview().catch(() => {}); }, 3500);
+  </script>
+</body>
+</html>
