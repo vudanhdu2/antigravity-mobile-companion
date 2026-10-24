@@ -1,966 +1,2338 @@
 <!DOCTYPE html>
-<html lang="vi" class="dark">
+<html lang="vi">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Antigravity Mobile Companion — Self-Hosted (100% Data Privacy)</title>
-  <link rel="stylesheet" href="fonts/antigravity-fonts.css" />
+  <title>Google Antigravity</title>
+  <link rel="stylesheet" href="/fonts/antigravity-fonts.css" />
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     :root {
-      --font-sans: 'Google Sans', 'Google Sans Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
-      --font-mono: 'Google Sans Code', 'Google Sans', ui-monospace, SFMono-Regular, 'Segoe UI', monospace;
+      --font-sans: 'Google Sans', 'Google Sans Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      --font-mono: 'Google Sans Code', 'Google Sans', ui-monospace, SFMono-Regular, Consolas, monospace;
     }
-    body {
+    * {
       font-family: var(--font-sans);
-      background: #070b14;
-      color: #f1f5f9;
-      font-size: 14px;
-      -webkit-font-smoothing: antialiased;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
     }
-    code, pre {
-      font-family: var(--font-mono);
+    code, pre, .font-mono {
+      font-family: var(--font-mono) !important;
     }
     .tabular-nums {
       font-variant-numeric: tabular-nums;
     }
-    .icon-3d {
-      object-fit: contain;
-      filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35));
+    body {
+      background-color: #f9f9f8;
+      color: #1f1f1f;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
     }
-    ::-webkit-scrollbar {
-      width: 6px;
-      height: 6px;
+    /* Ẩn thanh cuộn thô của trình duyệt trên Sidebar để giống hệt Antigravity Desktop */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .thin-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+    .thin-scroll::-webkit-scrollbar-track { background: transparent; }
+    .thin-scroll::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.14); border-radius: 9999px; }
+    .thin-scroll::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.25); }
+    @keyframes spinArc {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
     }
-    ::-webkit-scrollbar-track {
-      background: rgba(15, 23, 42, 0.4);
-    }
-    ::-webkit-scrollbar-thumb {
-      background: rgba(71, 85, 105, 0.6);
-      border-radius: 9999px;
+    .animate-spin-arc {
+      animation: spinArc 0.9s linear infinite;
     }
   </style>
 </head>
-<body class="h-screen w-screen overflow-hidden flex flex-col select-none bg-[#070b14] text-slate-100">
+<body class="h-dvh w-screen flex flex-col select-none overflow-hidden bg-[#f9f9f8] text-[#1f1f1f]">
 
-  <!-- PIN Authentication Modal -->
-  <div id="pinModal" class="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md hidden items-center justify-center p-4">
-    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-5">
+  <!-- ===================================================================== -->
+  <!-- MÀN HÌNH NHẬP MÃ PIN BẢO MẬT (KHI CHƯA CÓ SESSION TOKEN HỢP LỆ)        -->
+  <!-- ===================================================================== -->
+  <div id="pinLockModal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="w-full max-w-sm rounded-2xl bg-white border border-[#dfdfd8] p-6 shadow-2xl space-y-4 text-[#1f1f1f]">
       <div class="flex items-center gap-3">
-        <div class="w-12 h-12 rounded-2xl bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center shrink-0">
-          <img src="icons/menu_9_admin_shield.png" alt="Shield" class="w-8 h-8 icon-3d" />
+        <div class="w-10 h-10 rounded-xl bg-[#f3f3f2] border border-[#e2e2df] flex items-center justify-center shrink-0">
+          <img src="/icons/ui_lock.png" class="w-6 h-6 object-contain" alt="" />
         </div>
         <div>
-          <h2 class="text-base font-bold text-white">Khóa Bảo Mật Self-Host</h2>
-          <p class="text-xs text-slate-400 mt-0.5">Nhập mã PIN bảo mật hiển thị trên cửa sổ Terminal PC của bạn</p>
+          <h2 class="text-[16px] font-bold text-[#1f1f1f]">Mở Khóa Antigravity</h2>
+          <p class="text-xs text-[#6e6e6e]">Nhập mã PIN hiển thị trên cửa sổ Terminal máy PC</p>
         </div>
       </div>
-
-      <div class="bg-emerald-950/40 border border-emerald-500/30 rounded-xl p-3 flex items-start gap-2.5">
-        <img src="icons/ui_shield_lead.png" alt="Privacy" class="w-5 h-5 icon-3d shrink-0 mt-0.5" />
-        <p class="text-xs text-emerald-200 leading-relaxed">
-          <strong>Cam kết Zero-Data-Leak:</strong> 100% lịch sử hội thoại, mã nguồn và tệp đính kèm chỉ lưu trên ổ cứng máy PC của bạn. Tự động khóa IP sau 5 lần nhập sai mã PIN.
-        </p>
-      </div>
-
-      <div class="space-y-2">
-        <input id="pinInput" type="password" inputmode="numeric" placeholder="Nhập mã PIN (6 chữ số)..."
-          onkeydown="if(event.key==='Enter') submitPin()"
-          class="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-700 text-white text-center text-base font-bold tracking-widest outline-none focus:border-indigo-500 tabular-nums" />
-        <p id="pinError" class="text-xs text-rose-400 hidden text-center font-medium"></p>
-      </div>
-
-      <button onclick="submitPin()" class="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/25 transition-all">
-        <img src="icons/quest_lightning.png" alt="" class="w-4 h-4 icon-3d" />
-        <span>Xác Thực & Mở Khóa Phiên An Toàn</span>
+      <input
+        id="pinInputBox"
+        type="password"
+        inputmode="numeric"
+        maxlength="12"
+        placeholder="••••••"
+        class="w-full px-4 py-2.5 rounded-xl bg-[#f7f7f5] border border-[#dfdfd8] text-center text-xl font-bold tracking-[0.3em] text-[#1f1f1f] focus:outline-none focus:border-[#1967d2] tabular-nums"
+      />
+      <p id="pinErrorMsg" class="hidden text-xs font-medium text-[#d93025] text-center"></p>
+      <button
+        id="pinSubmitBtn"
+        onclick="submitPinUnlock()"
+        class="w-full py-2.5 rounded-xl bg-[#1f1f1f] hover:bg-[#333333] text-white font-semibold text-[13.5px] transition-all cursor-pointer"
+      >
+        Xác Thực &amp; Đồng Bộ Realtime
       </button>
     </div>
   </div>
 
-  <!-- QR & Security Center Modal -->
-  <div id="qrModal" class="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm hidden items-center justify-center p-3 sm:p-4">
-    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-4 sm:p-6 shadow-2xl space-y-4 max-h-[92vh] overflow-y-auto">
-      <!-- Modal Header -->
-      <div class="flex items-center justify-between border-b border-slate-800 pb-3.5 gap-2">
-        <div class="flex items-center gap-2.5">
-          <img src="icons/ui_shield_lead.png" alt="Security" class="w-7 h-7 icon-3d shrink-0" />
-          <div>
-            <h3 class="text-base font-bold text-white">Trung Tâm Kết Nối QR & Bảo Mật Chủ Động</h3>
-            <p class="text-xs text-emerald-400">100% Dữ liệu & Mã QR tạo trực tiếp trên ổ cứng PC (Zero Cloud Leak)</p>
-          </div>
-        </div>
-        <button onclick="toggleQrModal(false)" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold shrink-0">
-          Đóng
-        </button>
-      </div>
+  <!-- Input chọn file ẩn -->
+  <input
+    id="hiddenFileInput"
+    type="file"
+    multiple
+    accept="image/*,video/*,audio/*,.pdf,.txt,.md,.json,.csv,.zip,.doc,.docx,.xls,.xlsx,.py,.ts,.tsx,.js"
+    class="hidden"
+    onchange="handleFilesSelected(this.files); this.value='';"
+  />
 
-      <!-- Modal Tabs -->
-      <div class="grid grid-cols-2 gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
-        <button id="tabBtnQr" onclick="switchSecurityTab('qr')" class="py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-2 bg-indigo-600 text-white transition-all">
-          <img src="icons/sb_globe_system.png" alt="" class="w-4 h-4 icon-3d" />
-          <span>1. Quét QR (Wi-Fi LAN & 4G/5G)</span>
-        </button>
-        <button id="tabBtnSec" onclick="switchSecurityTab('sec')" class="py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-2 text-slate-400 hover:text-white transition-all">
-          <img src="icons/menu_9_admin_shield.png" alt="" class="w-4 h-4 icon-3d" />
-          <span>2. Kiểm Soát Bảo Mật & Nhật Ký</span>
-        </button>
-      </div>
+  <!-- Overlay che nền trên Mobile khi mở Sidebar Drawer -->
+  <div id="mobileSidebarBackdrop" onclick="toggleMobileSidebar(false)" class="hidden fixed inset-0 bg-black/35 z-30 md:hidden"></div>
 
-      <!-- TAB 1: QR & 4G/5G TUNNEL -->
-      <div id="secPaneQr" class="space-y-4">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-          <!-- Wi-Fi LAN Card -->
-          <div class="bg-slate-950/90 border border-slate-800 rounded-xl p-4 flex flex-col items-center text-center space-y-2.5">
-            <div class="flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/15 text-blue-300 text-xs font-bold">
-              <img src="icons/sb_pc_monitor.png" alt="" class="w-4 h-4 icon-3d" />
-              <span>1. Chung mạng Wi-Fi LAN</span>
-            </div>
-            <img id="lanQrImg" class="w-40 h-40 rounded-xl bg-white p-2 border border-slate-700" alt="LAN QR Offline" />
-            <input id="lanUrlText" readonly class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-300 text-center tabular-nums" />
-            <button onclick="copyInput('lanUrlText', 'Đã copy đường dẫn Wi-Fi LAN!')" class="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white flex items-center justify-center gap-1.5">
-              <img src="icons/cat_prompt_scroll.png" alt="" class="w-4 h-4 icon-3d" />
-              <span>Copy Link Wi-Fi LAN</span>
-            </button>
-          </div>
+  <!-- ===================================================================== -->
+  <!-- BỐ CỤC CHÍNH CHUẨN GOOGLE ANTIGRAVITY (SIDEBAR + MAIN CANVAS)         -->
+  <!-- ===================================================================== -->
+  <div class="flex-1 flex w-full h-full overflow-hidden relative">
 
-          <!-- 4G/5G Cloudflare Tunnel Card -->
-          <div class="bg-slate-950/90 border border-indigo-500/30 rounded-xl p-4 flex flex-col items-center text-center space-y-2.5">
-            <div class="flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-bold">
-              <img src="icons/sb_globe_system.png" alt="" class="w-4 h-4 icon-3d" />
-              <span>2. Qua 4G/5G (Cloudflare Tunnel)</span>
-            </div>
-            <div id="tunnelActiveBox" class="hidden flex-col items-center space-y-2.5 w-full">
-              <img id="tunnelQrImg" class="w-40 h-40 rounded-xl bg-white p-2 mx-auto border border-indigo-500/40" alt="4G QR Offline" />
-              <input id="tunnelUrlText" readonly class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-emerald-300 text-center tabular-nums" />
-              <div class="flex gap-2 w-full">
-                <button onclick="copyInput('tunnelUrlText', 'Đã copy đường dẫn 4G/5G!')" class="flex-1 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white flex items-center justify-center gap-1.5">
-                  <img src="icons/cat_prompt_scroll.png" alt="" class="w-4 h-4 icon-3d" />
-                  <span>Copy Link 4G/5G</span>
-                </button>
-                <button onclick="setTunnel(false)" class="px-3 py-2 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/30 text-rose-300 text-xs font-bold">
-                  Ngắt 4G
-                </button>
-              </div>
-            </div>
-            <div id="tunnelInactiveBox" class="flex flex-col items-center justify-center py-6 space-y-3 w-full">
-              <img src="icons/quest_rocket.png" alt="" class="w-10 h-10 icon-3d" />
-              <p class="text-xs text-slate-400 leading-relaxed">
-                Bật đường hầm Cloudflare miễn phí (bảo vệ bằng khóa PIN + chống dò mật khẩu) để điều khiển máy tính ở nhà khi bạn đi ra ngoài bằng 4G/5G.
-              </p>
-              <button id="btnEnableTunnel" onclick="setTunnel(true)" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-600 hover:opacity-95 text-xs font-bold text-white shadow flex items-center justify-center gap-2">
-                <img src="icons/sb_globe_system.png" alt="" class="w-4 h-4 icon-3d" />
-                <span>Bật Đường Hầm 4G/5G Ngay</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Quick PIN & Rotate Bar -->
-        <div class="bg-slate-950 border border-slate-800 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3">
-          <div class="flex items-center gap-2.5">
-            <img src="icons/menu_9_admin_shield.png" alt="" class="w-5 h-5 icon-3d" />
-            <div>
-              <div class="text-xs text-slate-400">Mã PIN Bảo Mật Hiện Tại (Tự động ẩn khỏi thanh địa chỉ sau khi mở):</div>
-              <div class="flex items-center gap-2 mt-0.5">
-                <span id="currentPinBadge" class="px-2.5 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 font-bold tracking-widest text-xs tabular-nums">------</span>
-                <span id="activeViaBadge" class="text-xs text-emerald-400 font-medium"></span>
-              </div>
-            </div>
-          </div>
-          <button onclick="rotatePinNow('')" class="px-3 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-center gap-1.5 transition-all">
-            <img src="icons/quest_lightning.png" alt="" class="w-4 h-4 icon-3d" />
-            <span>Đổi PIN Mới & Thu Hồi Phiên Cũ</span>
+    <!-- 1. LEFT SIDEBAR (Chuẩn ảnh mẫu Google Antigravity) -->
+    <aside
+      id="leftSidebar"
+      class="fixed md:static inset-y-0 left-0 z-40 w-[280px] h-full bg-[#f3f3f2] border-r border-[#e6e6e4] flex flex-col shrink-0 transition-transform duration-200 -translate-x-full md:translate-x-0"
+    >
+      <!-- Top Header: Antigravity  [◧]  [🔍] -->
+      <div class="px-3.5 pt-3 pb-2 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            onclick="startNewConversation()"
+            class="text-[14px] font-semibold text-[#1f1f1f] tracking-tight hover:opacity-80 transition-opacity cursor-pointer"
+          >
+            Antigravity
+          </button>
+          <button
+            type="button"
+            onclick="toggleSidebarCollapse()"
+            title="Toggle sidebar"
+            class="p-1 rounded-md text-[#5f6368] hover:text-[#1f1f1f] hover:bg-black/[0.04] transition-colors cursor-pointer"
+          >
+            <!-- PanelLeft Icon -->
+            <svg class="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="18" height="18" x="3" y="3" rx="2"/>
+              <path d="M9 3v18"/>
+            </svg>
+          </button>
+          <button
+            type="button"
+            onclick="toggleSearchBar()"
+            title="Search conversations"
+            class="p-1 rounded-md text-[#5f6368] hover:text-[#1f1f1f] hover:bg-black/[0.04] transition-colors cursor-pointer"
+          >
+            <!-- Search Icon -->
+            <svg class="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/>
+              <path d="m21 21-4.3-4.3"/>
+            </svg>
           </button>
         </div>
       </div>
 
-      <!-- TAB 2: SECURITY CONTROLS & AUDIT LOG -->
-      <div id="secPaneControls" class="hidden space-y-4">
-        <!-- Policy & Custom PIN -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div class="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-2.5">
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-2">
-                <img src="icons/sb_pc_monitor.png" alt="" class="w-5 h-5 icon-3d" />
-                <span class="text-xs font-bold text-white">Truy cập qua Wi-Fi LAN</span>
-              </div>
-              <button id="btnToggleLanPolicy" onclick="toggleLanPolicy()" class="px-3 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold">
-                Đang Bật
-              </button>
-            </div>
-            <p class="text-xs text-slate-400 leading-relaxed">
-              Khi mang laptop ra quán cafe hoặc dùng Wi-Fi công cộng, hãy chuyển sang <strong>Khóa LAN</strong> để chỉ cho phép chính máy PC này hoặc đường hầm 4G/5G có mã PIN kết nối.
-            </p>
-          </div>
+      <!-- Ô tìm kiếm nhanh khi bấm kính lúp -->
+      <div id="sidebarSearchBox" class="hidden px-3 pb-2">
+        <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] bg-white border border-[#dfdfd8]">
+          <svg class="w-3.5 h-3.5 text-[#8e8e8e] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+          </svg>
+          <input
+            id="sidebarSearchInput"
+            type="text"
+            oninput="handleSearchInput(this.value)"
+            placeholder="Search conversations..."
+            class="w-full bg-transparent text-[12.5px] text-[#1f1f1f] placeholder-[#8e8e8e] outline-none"
+          />
+          <button type="button" onclick="clearSearchInput()" class="text-[#8e8e8e] hover:text-[#1f1f1f] text-xs">✕</button>
+        </div>
+      </div>
 
-          <div class="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-2.5">
+      <!-- Primary Navigation: + New Conversation | Conversation History | Customizations -->
+      <div class="px-3 space-y-0.5">
+        <button
+          type="button"
+          onclick="startNewConversation()"
+          class="w-full px-3 py-1.5 mb-1 rounded-[8px] bg-white hover:bg-[#fcfcfb] border border-[#e2e2df] shadow-[0_1px_2px_rgba(0,0,0,0.03)] flex items-center gap-2 text-[13px] text-[#1f1f1f] font-normal transition-all cursor-pointer"
+        >
+          <svg class="w-[15px] h-[15px] text-[#4a4a4a]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 12h14"/><path d="M12 5v14"/>
+          </svg>
+          <span>New Conversation</span>
+        </button>
+
+        <button
+          type="button"
+          onclick="openHistoryModal()"
+          class="w-full px-2.5 py-1.5 rounded-[8px] hover:bg-black/[0.04] flex items-center gap-2.5 text-[13px] text-[#3c3c3c] font-normal transition-colors cursor-pointer"
+        >
+          <!-- History Icon -->
+          <svg class="w-[15px] h-[15px] text-[#5f6368]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+            <path d="M3 3v5h5"/>
+            <path d="M12 7v5l4 2"/>
+          </svg>
+          <span>Conversation History</span>
+        </button>
+
+        <button
+          type="button"
+          onclick="openCustomizationsModal()"
+          class="w-full px-2.5 py-1.5 rounded-[8px] hover:bg-black/[0.04] flex items-center gap-2.5 text-[13px] text-[#3c3c3c] font-normal transition-colors cursor-pointer"
+        >
+          <!-- Customizations Icon -->
+          <svg class="w-[15px] h-[15px] text-[#5f6368]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="20" height="5" x="2" y="3" rx="1"/>
+            <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/>
+            <path d="M10 12h4"/>
+          </svg>
+          <span>Customizations</span>
+        </button>
+      </div>
+
+      <!-- Scrollable Pinned Conversations & Projects Tree -->
+      <div class="flex-1 overflow-y-auto px-3 py-3 space-y-4 no-scrollbar">
+        <!-- Pinned Conversations -->
+        <div id="pinnedSectionWrap" class="hidden">
+          <div class="px-1.5 mb-1 text-[12px] text-[#787878] font-normal">
+            Pinned Conversations
+          </div>
+          <div id="pinnedListContainer" class="space-y-0.5"></div>
+        </div>
+
+        <!-- Projects -->
+        <div>
+          <div class="px-1.5 mb-1 flex items-center justify-between">
+            <span class="text-[12px] text-[#787878] font-normal">Projects</span>
             <div class="flex items-center gap-2">
-              <img src="icons/menu_9_admin_shield.png" alt="" class="w-5 h-5 icon-3d" />
-              <span class="text-xs font-bold text-white">Đặt Mã PIN Cá Nhân (4–12 số)</span>
-            </div>
-            <div class="flex gap-2">
-              <input id="customPinInput" type="text" inputmode="numeric" placeholder="VD: 888999 (để trống = ngẫu nhiên)"
-                class="flex-1 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white tabular-nums outline-none focus:border-indigo-500" />
-              <button onclick="rotatePinNow(document.getElementById('customPinInput').value)" class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shrink-0">
-                Lưu PIN
+              <button
+                type="button"
+                id="btnFilterUnread"
+                onclick="toggleFilterUnread()"
+                title="Filter running or unread conversations"
+                class="p-0.5 rounded text-[#787878] hover:text-[#1f1f1f] hover:bg-black/[0.05] transition-colors cursor-pointer"
+              >
+                <!-- ListFilter Icon -->
+                <svg class="w-[14px] h-[14px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 6h18"/><path d="M7 12h10"/><path d="M10 18h4"/>
+                </svg>
+              </button>
+              <button
+                type="button"
+                onclick="openSelectProjectModal()"
+                title="Select or switch workspace project"
+                class="p-0.5 rounded text-[#787878] hover:text-[#1f1f1f] hover:bg-black/[0.05] transition-colors cursor-pointer"
+              >
+                <!-- FolderPlus Icon -->
+                <svg class="w-[14px] h-[14px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 10v6"/><path d="M9 13h6"/>
+                  <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+                </svg>
               </button>
             </div>
-            <p class="text-xs text-slate-400">Đổi mã PIN sẽ tự động đăng xuất mọi thiết bị cũ ngay lập tức.</p>
           </div>
-        </div>
 
-        <!-- Active Sessions -->
-        <div class="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-2">
-          <div class="flex items-center justify-between">
-            <span class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-              <img src="icons/ui_shield_lead.png" alt="" class="w-4 h-4 icon-3d" />
-              <span>Thiết Bị Đang Kết Nối (<span id="sessionsCountLabel" class="tabular-nums">0</span>)</span>
-            </span>
-            <button onclick="logoutThisDevice()" class="text-xs text-rose-400 hover:underline font-bold">
-              Đăng xuất thiết bị này
+          <div id="projectsTreeContainer" class="space-y-3"></div>
+        </div>
+      </div>
+
+      <!-- Bottom Footer: Host Selector Pill + Settings -->
+      <div class="p-2.5 pt-2 border-t border-[#e6e6e4] space-y-1.5 bg-[#f3f3f2] relative">
+        <button
+          type="button"
+          onclick="toggleHostPopover(event)"
+          class="w-full px-3 py-2 rounded-[8px] bg-white hover:bg-[#fcfcfb] border border-[#dfdfd8] shadow-[0_1px_2px_rgba(0,0,0,0.02)] flex items-center justify-between transition-colors cursor-pointer"
+        >
+          <div class="flex items-center gap-2 min-w-0">
+            <span id="hostStatusDot" class="w-2 h-2 rounded-full bg-[#2e7d32] shrink-0"></span>
+            <span id="hostNameLabel" class="text-[12.5px] font-medium text-[#1f1f1f] truncate">vudanhdu-cosmic-spark</span>
+          </div>
+          <svg class="w-3.5 h-3.5 text-[#6e6e6e] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </button>
+
+        <!-- Popover chọn Host / Trạng thái WebSocket Realtime -->
+        <div id="hostPopover" class="hidden absolute left-2.5 right-2.5 bottom-20 rounded-xl bg-white border border-[#dfdfd8] shadow-xl py-1.5 z-50">
+          <div class="px-3 py-1 text-xs font-medium text-[#787878] flex items-center justify-between border-b border-[#f0f0ee]">
+            <span>Connected Machine</span>
+            <span id="wsRealtimeBadge" class="text-[#2e7d32] font-semibold">● WS Realtime</span>
+          </div>
+          <div id="hostInstancesList" class="py-1"></div>
+          <div class="px-2.5 pt-1 border-t border-[#f0f0ee]">
+            <button
+              type="button"
+              onclick="closeAllPopovers(); openSettingsModal('qr');"
+              class="w-full px-2.5 py-1.5 rounded-lg bg-[#f7f7f5] hover:bg-[#ececea] text-[12px] font-medium text-[#1967d2] flex items-center justify-between cursor-pointer"
+            >
+              <span>Mã QR Điện Thoại &amp; 4G/5G</span>
+              <span>→</span>
             </button>
           </div>
-          <div id="activeSessionsBox" class="space-y-1.5 max-h-28 overflow-y-auto text-xs"></div>
         </div>
 
-        <!-- Security Audit Log -->
-        <div class="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-2">
-          <div class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-            <img src="icons/cat_prompt_scroll.png" alt="" class="w-4 h-4 icon-3d" />
-            <span>Nhật Ký Bảo Mật Thời Gian Thực (Chống Brute-Force & Sandbox)</span>
-          </div>
-          <div id="auditLogBox" class="space-y-1.5 max-h-40 overflow-y-auto text-xs"></div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Toast Notification -->
-  <div id="toastBox" class="fixed bottom-16 right-4 z-50 hidden px-4 py-2.5 rounded-xl bg-slate-900 border border-indigo-500/40 text-white text-xs font-bold shadow-2xl items-center gap-2">
-    <img src="icons/ui_shield_lead.png" alt="" class="w-4 h-4 icon-3d" />
-    <span id="toastText"></span>
-  </div>
-
-  <!-- Top Header -->
-  <header class="h-14 px-3 sm:px-4 py-2 bg-slate-900/95 border-b border-slate-800 flex items-center justify-between gap-2 shrink-0">
-    <div class="flex items-center gap-2.5 min-w-0">
-      <button onclick="toggleSidebar()" class="md:hidden px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 shrink-0">
-        <img src="icons/sb_chat_activity.png" alt="" class="w-4 h-4 icon-3d" />
-        <span>Phiên</span>
-      </button>
-      <img src="icons/menu_5_remote_agent.png" alt="Companion" class="w-7 h-7 icon-3d shrink-0 hidden sm:block" />
-      <div class="min-w-0">
-        <div class="text-xs sm:text-sm font-bold text-white truncate flex items-center gap-2">
-          <span class="truncate">Antigravity Mobile Companion</span>
-          <span class="px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold shrink-0">
-            Self-Host 100% Privacy
-          </span>
-        </div>
-        <div id="hostSubtitle" class="text-xs text-slate-400 truncate mt-0.5">Đang kết nối máy PC...</div>
-      </div>
-    </div>
-
-    <div class="flex items-center gap-2 shrink-0">
-      <button onclick="openQrAndTunnel()" class="px-3 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-200 text-xs font-bold flex items-center gap-1.5 transition-all">
-        <img src="icons/ui_shield_lead.png" alt="QR" class="w-4 h-4 icon-3d" />
-        <span>QR & Bảo Mật 4G/5G</span>
-      </button>
-      <button onclick="startNewConvMode()" class="px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all">
-        <img src="icons/quest_rocket.png" alt="New" class="w-4 h-4 icon-3d" />
-        <span>+ Giao việc mới</span>
-      </button>
-    </div>
-  </header>
-
-  <!-- Main Workspace -->
-  <div class="flex-1 flex overflow-hidden relative">
-    <!-- Left Sidebar -->
-    <aside id="sidebar" class="w-80 bg-slate-900 border-r border-slate-800 flex flex-col shrink-0 absolute md:static inset-y-0 left-0 z-30 -translate-x-full md:translate-x-0 transition-transform">
-      <div class="p-3 border-b border-slate-800 space-y-2.5">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-            <img src="icons/sb_pc_monitor.png" alt="" class="w-4 h-4 icon-3d" />
-            <span>Dự án (Project) trên PC</span>
-          </span>
-          <button onclick="loadOverview()" class="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 font-bold">
-            Làm mới
+        <div class="flex items-center justify-between pt-0.5">
+          <button
+            type="button"
+            onclick="openSettingsModal('general')"
+            class="px-2 py-1 rounded-[7px] hover:bg-black/[0.04] flex items-center gap-2 text-[12.5px] text-[#3c3c3c] transition-colors cursor-pointer"
+          >
+            <svg class="w-[14px] h-[14px] text-[#6e6e6e]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+            <span>Settings</span>
           </button>
         </div>
-        <select id="projectSelect" onchange="renderConversations()" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-bold text-white outline-none focus:border-indigo-500"></select>
-        <input id="convSearchInput" type="text" oninput="renderConversations()" placeholder="Tìm kiếm phiên làm việc..."
-          class="w-full px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 outline-none focus:border-indigo-500" />
       </div>
-      <div id="convList" class="flex-1 overflow-y-auto p-2 space-y-1"></div>
     </aside>
 
-    <!-- Chat & Trajectory Area -->
-    <main class="flex-1 flex flex-col bg-[#070b14] overflow-hidden min-w-0">
-      <!-- Conversation Subheader & Live Progress Banner -->
-      <div id="convHeaderBar" class="px-4 py-2 bg-slate-900/70 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
-        <div class="min-w-0 flex items-center gap-2">
-          <img src="icons/sb_chat_activity.png" alt="" class="w-4 h-4 icon-3d shrink-0" />
-          <span id="activeConvTitle" class="text-xs font-bold text-slate-200 truncate">Chọn một phiên hoặc bấm "+ Giao việc mới"</span>
-        </div>
-        <div class="flex items-center gap-2 shrink-0">
-          <button id="btnPinActive" onclick="togglePinActive()" class="hidden px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 items-center gap-1">
-            <img src="icons/ui_crown_top1.png" alt="" class="w-3.5 h-3.5 icon-3d" />
-            <span id="btnPinText">Ghim</span>
-          </button>
-          <button id="btnCancelActive" onclick="cancelActiveConv()" class="hidden px-2.5 py-1 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-xs font-bold text-rose-300 items-center gap-1">
-            <span>Dừng tác vụ</span>
-          </button>
-        </div>
-      </div>
+    <!-- 2. RIGHT MAIN CANVAS (Chuẩn ảnh mẫu Google Antigravity) -->
+    <main class="flex-1 h-full flex flex-col bg-[#f9f9f8] relative overflow-hidden">
 
-      <!-- Live Plan / Progress Banner (when AI outputs Kế hoạch: / Tiến độ:) -->
-      <div id="liveProgressBanner" class="hidden px-4 py-2 bg-indigo-950/60 border-b border-indigo-500/30 text-xs text-indigo-200 flex-col gap-0.5">
-        <div id="planBannerLine" class="font-bold text-cyan-300 truncate"></div>
-        <div id="progressBannerLine" class="text-slate-300 truncate"></div>
-      </div>
-
-      <!-- Messages List -->
-      <div id="messagesBox" class="flex-1 overflow-y-auto p-3 sm:p-5 space-y-3.5 select-text"></div>
-
-      <!-- Attachment Preview Bar -->
-      <div id="mediaPreviewBar" class="hidden px-4 py-2 bg-slate-900/90 border-t border-slate-800 flex-wrap gap-2 items-center"></div>
-
-      <!-- Composer -->
-      <div class="p-3 bg-slate-900 border-t border-slate-800 space-y-2">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <div class="flex flex-wrap items-center gap-2">
-            <label class="cursor-pointer px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 transition-all">
-              <img src="icons/cat_plugin_puzzle.png" alt="" class="w-4 h-4 icon-3d" />
-              <span>Đính kèm Ảnh/File</span>
-              <input id="fileInput" type="file" multiple class="hidden" onchange="handleFilesSelected(event)" />
-            </label>
-            <select id="modelSelect" class="px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-bold text-slate-200 outline-none focus:border-indigo-500 tabular-nums">
-              <option value="MODEL_PLACEHOLDER_M417">Gemini 4 Argon (High) • 100%</option>
-              <option value="MODEL_PLACEHOLDER_M318">Gemini 3.8 Flash (High) • 100%</option>
-              <option value="MODEL_PLACEHOLDER_M26">Claude Opus 4.6 (Thinking) • 100%</option>
-              <option value="MODEL_PLACEHOLDER_M35">Claude Sonnet 4.6 (Thinking) • 100%</option>
-            </select>
+      <!-- Top Header Bar -->
+      <div class="h-[52px] px-4 flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2 min-w-0">
+          <!-- Nút mở Sidebar khi thu gọn hoặc trên Mobile -->
+          <div id="collapsedSidebarBtns" class="flex md:hidden items-center gap-2">
+            <button
+              type="button"
+              onclick="expandSidebar()"
+              title="Open sidebar"
+              class="p-1.5 rounded-md text-[#5f6368] hover:text-[#1f1f1f] hover:bg-black/[0.04] transition-colors cursor-pointer"
+            >
+              <svg class="w-[16px] h-[16px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
+                <rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>
+              </svg>
+            </button>
+            <button
+              type="button"
+              onclick="startNewConversation()"
+              class="px-2.5 py-1 rounded-md bg-white border border-[#e2e2df] text-[12.5px] text-[#1f1f1f] hover:bg-[#fcfcfb] flex items-center gap-1.5 cursor-pointer"
+            >
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+              <span>New</span>
+            </button>
           </div>
-          <span id="statusBadge" class="text-xs text-emerald-400 font-medium tabular-nums">Sẵn sàng</span>
+
+          <!-- Breadcrumb khi đang mở 1 hội thoại -->
+          <div id="activeConvHeaderBar" class="hidden flex items-center gap-2 min-w-0">
+            <button
+              type="button"
+              onclick="startNewConversation()"
+              title="Back to New Conversation"
+              class="p-1 rounded-md text-[#6e6e6e] hover:text-[#1f1f1f] hover:bg-black/[0.04] cursor-pointer"
+            >
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+            </button>
+            <span class="hidden sm:flex items-center gap-1 text-[12.5px] text-[#6e6e6e] shrink-0">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+              <span id="headerConvProject">AG</span>
+            </span>
+            <span class="hidden sm:inline text-[#c4c4c0]">/</span>
+            <span id="headerConvTitle" class="text-[13.5px] font-medium text-[#1f1f1f] truncate max-w-[220px] sm:max-w-[440px]">Conversation</span>
+            <span id="headerRunningSpinner" class="hidden shrink-0">
+              <svg class="animate-spin-arc w-3.5 h-3.5 text-[#1967d2]" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-opacity="0.18" stroke-width="2.2"/>
+                <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <button
+              type="button"
+              id="headerPinBtn"
+              onclick="toggleActiveConvPin()"
+              title="Pin / Unpin conversation"
+              class="p-1 rounded-md text-[#787878] hover:text-[#1f1f1f] hover:bg-black/[0.04] transition-colors cursor-pointer"
+            >
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" x2="12" y1="17" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
+            </button>
+          </div>
         </div>
 
-        <div class="flex items-end gap-2">
-          <textarea id="promptInput" rows="2"
-            onkeydown="if(event.key==='Enter' && !event.shiftKey){ event.preventDefault(); sendPrompt(); }"
-            placeholder="Nhập yêu cầu giao việc cho Antigravity trên PC (Enter để gửi, Shift+Enter xuống dòng, Ctrl+V dán ảnh)..."
-            class="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white outline-none focus:border-indigo-500 resize-none"></textarea>
-          <button id="sendBtn" onclick="sendPrompt()" class="px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white font-bold text-xs shrink-0 h-11 flex items-center gap-1.5 shadow-md shadow-indigo-600/20">
-            <img src="icons/quest_rocket.png" alt="" class="w-4 h-4 icon-3d" />
-            <span>Gửi lệnh</span>
+        <!-- Top-Right Icons giống hệt ảnh mẫu: [📖 Docs/Customizations] + [🔴 Vòng tròn trạng thái/Bảo mật] -->
+        <div class="flex items-center gap-2.5 ml-auto shrink-0">
+          <button
+            type="button"
+            onclick="openCustomizationsModal()"
+            title="Customizations, Rules &amp; Skills"
+            class="p-1.5 rounded-md text-[#5f6368] hover:text-[#1f1f1f] hover:bg-black/[0.04] transition-colors cursor-pointer"
+          >
+            <!-- Book Open Icon (giống góc phải trên của ảnh mẫu) -->
+            <svg class="w-[16px] h-[16px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+              <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+            </svg>
+          </button>
+
+          <button
+            type="button"
+            onclick="openSettingsModal('qr')"
+            title="Kết nối QR Điện Thoại, 4G/5G &amp; Bảo Mật Chủ Động"
+            class="w-8 h-8 rounded-full border-2 border-[#1967d2] flex items-center justify-center hover:scale-105 transition-transform cursor-pointer bg-white"
+          >
+            <span id="topRightStatusCircle" class="w-4 h-4 rounded-full bg-[#d93025]"></span>
           </button>
         </div>
       </div>
+
+      <!-- ================================================================= -->
+      <!-- TRẠNG THÁI 1: MÀN HÌNH NEW CONVERSATION (GIỮA MÀN HÌNH GIỐNG ẢNH) -->
+      <!-- ================================================================= -->
+      <div id="emptyStateView" class="flex-1 flex flex-col items-center justify-center px-4 sm:px-6 pb-16 overflow-y-auto">
+        <div class="w-full max-w-[660px]">
+          <!-- Nút chọn thư mục Project phía trên khung nhập: 📁 AG ⌄ -->
+          <div class="mb-2 flex items-center relative">
+            <button
+              type="button"
+              onclick="toggleProjectDropdown(event)"
+              class="flex items-center gap-1.5 px-2 py-1 rounded-md text-[13px] text-[#5f6368] hover:text-[#1f1f1f] hover:bg-black/[0.04] transition-colors cursor-pointer"
+            >
+              <svg class="w-[15px] h-[15px] text-[#787878]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+              </svg>
+              <span id="selectedProjectLabel">AG</span>
+              <svg class="w-3.5 h-3.5 text-[#787878]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="m6 9 6 6 6-6"/>
+              </svg>
+            </button>
+
+            <!-- Dropdown chọn Project -->
+            <div id="projectDropdownMenu" class="hidden absolute left-0 top-full mt-1 w-64 rounded-xl bg-white border border-[#dfdfd8] shadow-xl py-1.5 z-50 max-h-64 overflow-y-auto thin-scroll">
+              <div class="px-3 py-1 text-xs font-medium text-[#787878]">Select Workspace Project</div>
+              <div id="projectDropdownItems"></div>
+            </div>
+          </div>
+
+          <!-- Khung Composer 2 tầng chuẩn Antigravity sẽ được gắn vào đây khi ở Empty State -->
+          <div id="emptyComposerMount"></div>
+        </div>
+      </div>
+
+      <!-- ================================================================= -->
+      <!-- TRẠNG THÁI 2: MÀN HÌNH HỘI THOẠI ĐANG MỞ (STREAM REALTIME)        -->
+      <!-- ================================================================= -->
+      <div id="activeConvView" class="hidden flex-1 flex flex-col min-h-0 overflow-hidden">
+        <!-- Dòng chảy tin nhắn & bước chạy Tool -->
+        <div id="messagesScrollArea" class="flex-1 overflow-y-auto px-4 sm:px-6 py-4 thin-scroll">
+          <div id="messagesListContainer" class="max-w-[740px] mx-auto space-y-5 pb-6"></div>
+        </div>
+
+        <!-- Khung Composer 2 tầng gắn cố định ở đáy khi đang xem hội thoại -->
+        <div class="px-4 sm:px-6 pb-4 pt-2 bg-[#f9f9f8] shrink-0">
+          <div id="bottomComposerMount" class="max-w-[680px] mx-auto"></div>
+        </div>
+      </div>
+
     </main>
   </div>
 
-  <script>
-    const urlParams = new URLSearchParams(window.location.search);
-    const urlPin = (urlParams.get('pin') || '').trim();
-    let sessionToken = localStorage.getItem('ag_selfhost_session') || '';
-    let pinCode = urlPin || localStorage.getItem('ag_selfhost_pin') || '';
+  <!-- ===================================================================== -->
+  <!-- COMPONENT COMPOSER 2 TẦNG DÙNG CHUNG (DI CHUYỂN GIỮA EMPTY & BOTTOM)  -->
+  <!-- ===================================================================== -->
+  <div id="sharedComposerTemplate" class="hidden">
+    <div id="sharedComposerRoot" class="relative w-full">
+      <!-- Popup Slash Commands (/) -->
+      <div id="slashMenuPopover" class="hidden absolute bottom-full left-0 right-0 mb-2 rounded-xl bg-white border border-[#dfdfd8] shadow-xl py-1.5 max-h-56 overflow-y-auto z-50 thin-scroll">
+        <div class="px-3.5 py-1 text-xs font-medium uppercase tracking-wider text-[#787878]">Actions &amp; Workflows</div>
+        <div id="slashMenuItems"></div>
+      </div>
 
-    // Bảo mật: Xóa ngay ?pin=XXXXXX khỏi thanh địa chỉ trình duyệt để chống lộ PIN trong lịch sử web
-    if (urlPin) {
-      localStorage.setItem('ag_selfhost_pin', urlPin);
-      if (window.history && window.history.replaceState) {
-        const cleanUrl = window.location.pathname + window.location.hash;
+      <!-- Popup Mention Project (@) -->
+      <div id="mentionMenuPopover" class="hidden absolute bottom-full left-0 right-0 mb-2 rounded-xl bg-white border border-[#dfdfd8] shadow-xl py-1.5 max-h-56 overflow-y-auto z-50 thin-scroll">
+        <div class="px-3.5 py-1 text-xs font-medium uppercase tracking-wider text-[#787878]">Mention Project / Context</div>
+        <div id="mentionMenuItems"></div>
+      </div>
+
+      <!-- Khung 2 tầng: Tầng trên trắng (#ffffff), tầng dưới xám nhạt (#efefef) -->
+      <div
+        id="composerOuterBox"
+        ondragover="event.preventDefault(); this.classList.add('ring-2','ring-[#1967d2]/30');"
+        ondragleave="this.classList.remove('ring-2','ring-[#1967d2]/30');"
+        ondrop="handleDropMedia(event)"
+        class="rounded-[16px] bg-[#efefef] border border-[#e3e3e0] transition-all shadow-[0_2px_10px_rgba(0,0,0,0.03)]"
+      >
+        <!-- Tầng 1: Khung trắng chứa Textarea + hàng nút điều khiển -->
+        <div class="bg-white rounded-[15px] px-4 pt-3.5 pb-2.5 border-b border-[#e5e5e2]">
+          <!-- Danh sách ảnh/file đính kèm -->
+          <div id="composerAttachmentsRow" class="hidden flex items-center gap-2 pb-2.5 overflow-x-auto thin-scroll"></div>
+
+          <textarea
+            id="composerTextarea"
+            rows="1"
+            oninput="handlePromptInput(this)"
+            onpaste="handlePasteMedia(event)"
+            onkeydown="if(event.key==='Enter' && !event.shiftKey){ event.preventDefault(); submitPrompt(); }"
+            placeholder="Ask anything, @ to mention, / for actions"
+            class="w-full bg-transparent text-[#1f1f1f] placeholder-[#8e8e8e] text-[14px] leading-relaxed outline-none resize-none max-h-36 min-h-[28px]"
+          ></textarea>
+
+          <!-- Hàng nút bên trong khung trắng: [+] [Gemini 4 Argon High ⌄] ... [🛡️ Turbo ⌄] [🎤] [→] -->
+          <div class="mt-3 flex items-center justify-between gap-2">
+            <!-- Bên trái: Nút [+] và chọn Model -->
+            <div class="flex items-center gap-1.5 min-w-0 relative">
+              <button
+                type="button"
+                onclick="document.getElementById('hiddenFileInput').click()"
+                title="Add attachment or image"
+                class="p-1 rounded-md text-[#6e6e6e] hover:text-[#1f1f1f] hover:bg-black/[0.04] transition-colors shrink-0 cursor-pointer"
+              >
+                <svg class="w-[16px] h-[16px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M5 12h14"/><path d="M12 5v14"/>
+                </svg>
+              </button>
+
+              <button
+                type="button"
+                onclick="toggleModelPopover(event)"
+                class="flex items-center gap-1.5 py-1 px-2 rounded-md hover:bg-black/[0.04] transition-colors truncate cursor-pointer"
+              >
+                <span id="selectedModelNameLabel" class="text-[12.5px] text-[#3c3c3c] font-normal truncate">Gemini 4 Argon</span>
+                <span id="selectedModelTierLabel" class="text-[12.5px] text-[#8e8e8e] font-normal shrink-0">High</span>
+                <svg class="w-3.5 h-3.5 text-[#8e8e8e] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="m6 9 6 6 6-6"/>
+                </svg>
+              </button>
+
+              <!-- Menu chọn Model -->
+              <div id="modelMenuPopover" class="hidden absolute left-6 bottom-full mb-2 w-72 rounded-xl bg-white border border-[#dfdfd8] shadow-xl py-1.5 z-50 max-h-72 overflow-y-auto thin-scroll">
+                <div class="px-3.5 py-1 text-xs font-medium text-[#787878] flex items-center justify-between">
+                  <span>Model</span>
+                  <span>Quota</span>
+                </div>
+                <div id="modelMenuItems"></div>
+              </div>
+            </div>
+
+            <!-- Bên phải: [🛡️ Turbo ⌄]  [🎤]  [→] -->
+            <div class="flex items-center gap-2 shrink-0 relative">
+              <!-- Chọn chế độ Turbo / Auto / Ask -->
+              <div class="relative">
+                <button
+                  type="button"
+                  onclick="toggleExecModePopover(event)"
+                  class="flex items-center gap-1.5 px-2 py-1 rounded-md text-[12.5px] text-[#5f6368] hover:text-[#1f1f1f] hover:bg-black/[0.04] transition-colors cursor-pointer"
+                >
+                  <!-- ShieldCheck Icon -->
+                  <svg class="w-[14px] h-[14px] text-[#6e6e6e]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>
+                    <path d="m9 12 2 2 4-4"/>
+                  </svg>
+                  <span id="execModeLabel">Turbo</span>
+                  <svg class="w-3 h-3 text-[#8e8e8e]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="m6 9 6 6 6-6"/>
+                  </svg>
+                </button>
+
+                <div id="execModePopover" class="hidden absolute right-0 bottom-full mb-1.5 w-56 rounded-xl bg-white border border-[#dfdfd8] shadow-xl py-1.5 z-50">
+                  <button type="button" onclick="selectExecMode('Turbo')" class="w-full px-3 py-2 flex items-start justify-between hover:bg-black/[0.04] text-left cursor-pointer">
+                    <div>
+                      <div class="text-[12.5px] font-medium text-[#1f1f1f]">Turbo</div>
+                      <div class="text-xs text-[#787878]">Auto-run safe commands &amp; fast execution</div>
+                    </div>
+                  </button>
+                  <button type="button" onclick="selectExecMode('Auto')" class="w-full px-3 py-2 flex items-start justify-between hover:bg-black/[0.04] text-left cursor-pointer">
+                    <div>
+                      <div class="text-[12.5px] font-medium text-[#1f1f1f]">Auto</div>
+                      <div class="text-xs text-[#787878]">Standard autonomous agent execution</div>
+                    </div>
+                  </button>
+                  <button type="button" onclick="selectExecMode('Ask')" class="w-full px-3 py-2 flex items-start justify-between hover:bg-black/[0.04] text-left cursor-pointer">
+                    <div>
+                      <div class="text-[12.5px] font-medium text-[#1f1f1f]">Ask</div>
+                      <div class="text-xs text-[#787878]">Ask confirmation before running commands</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Nút Voice Mic -->
+              <button
+                type="button"
+                id="voiceMicBtn"
+                onclick="toggleVoiceInput()"
+                title="Voice input (Tiếng Việt)"
+                class="p-1.5 rounded-full text-[#6e6e6e] hover:text-[#1f1f1f] hover:bg-black/[0.04] transition-colors cursor-pointer"
+              >
+                <svg class="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                  <line x1="12" x2="12" y1="19" y2="22"/>
+                </svg>
+              </button>
+
+              <!-- Nút Gửi [→] hoặc Dừng [⏹] -->
+              <button
+                type="button"
+                id="composerSubmitBtn"
+                onclick="handleSubmitOrStop()"
+                title="Submit"
+                class="w-7 h-7 rounded-full bg-[#e4e4e2] text-[#6e6e6e] flex items-center justify-center transition-all cursor-pointer"
+              >
+                <svg id="submitArrowIcon" class="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+                </svg>
+                <svg id="stopSquareIcon" class="hidden w-3 h-3 fill-current" viewBox="0 0 24 24">
+                  <rect width="16" height="16" x="4" y="4" rx="2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tầng 2: Thanh đáy xám nhạt chứa [💻 Local ⌄] -->
+        <div class="px-3.5 py-1.5 flex items-center justify-between text-[12px] text-[#5f6368] relative">
+          <div class="relative">
+            <button
+              type="button"
+              onclick="toggleEnvModePopover(event)"
+              class="flex items-center gap-1.5 px-1.5 py-0.5 rounded hover:bg-black/[0.04] hover:text-[#1f1f1f] transition-colors cursor-pointer"
+            >
+              <!-- Laptop Icon -->
+              <svg class="w-[13.5px] h-[13.5px] text-[#6e6e6e]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16"/>
+              </svg>
+              <span id="envModeLabel">Local</span>
+              <svg class="w-3 h-3 text-[#8e8e8e]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="m6 9 6 6 6-6"/>
+              </svg>
+            </button>
+
+            <div id="envModePopover" class="hidden absolute left-0 bottom-full mb-1.5 w-52 rounded-xl bg-white border border-[#dfdfd8] shadow-xl py-1.5 z-50">
+              <button type="button" onclick="selectEnvMode('Local')" class="w-full px-3 py-2 flex items-start justify-between hover:bg-black/[0.04] text-left cursor-pointer">
+                <div>
+                  <div class="text-[12.5px] font-medium text-[#1f1f1f]">Local</div>
+                  <div class="text-xs text-[#787878]">Run directly in local workspace on host</div>
+                </div>
+              </button>
+              <button type="button" onclick="selectEnvMode('Worktree')" class="w-full px-3 py-2 flex items-start justify-between hover:bg-black/[0.04] text-left cursor-pointer">
+                <div>
+                  <div class="text-[12.5px] font-medium text-[#1f1f1f]">Worktree</div>
+                  <div class="text-xs text-[#787878]">Isolated git worktree branch</div>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          <div id="liveWsStatusHint" class="text-[12px] text-[#787878] flex items-center gap-1.5">
+            <span id="composerWsDot" class="w-1.5 h-1.5 rounded-full bg-[#2e7d32]"></span>
+            <span id="composerWsText">Realtime WS synced</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL 1: CONVERSATION HISTORY (TÌM KIẾM TOÀN BỘ PHIÊN LÀM VIỆC)        -->
+  <!-- ===================================================================== -->
+  <div id="historyModal" onclick="closeHistoryModal()" class="hidden fixed inset-0 bg-black/45 z-50 flex items-center justify-center p-4">
+    <div onclick="event.stopPropagation()" class="w-full max-w-lg rounded-2xl bg-white text-[#1f1f1f] border border-[#dfdfd8] p-4 space-y-3 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-[#ececea] pb-2.5">
+        <div class="flex items-center gap-2">
+          <svg class="w-4 h-4 text-[#5f6368]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+          <h3 class="text-[14.5px] font-semibold">Conversation History</h3>
+        </div>
+        <button type="button" onclick="closeHistoryModal()" class="text-[#787878] hover:text-[#1f1f1f] cursor-pointer">✕</button>
+      </div>
+      <input
+        id="historyModalSearch"
+        type="text"
+        oninput="renderHistoryModalList(this.value)"
+        placeholder="Filter conversations by title or project..."
+        class="w-full px-3 py-2 rounded-xl bg-[#f7f7f5] border border-[#dfdfd8] text-[13px] outline-none focus:border-[#1967d2]"
+      />
+      <div id="historyModalList" class="max-h-96 overflow-y-auto space-y-1 pr-1 thin-scroll"></div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL 2: CUSTOMIZATIONS (RULES, SKILLS, MCP SERVERS TRÊN PC)          -->
+  <!-- ===================================================================== -->
+  <div id="customizationsModal" onclick="closeCustomizationsModal()" class="hidden fixed inset-0 bg-black/45 z-50 flex items-center justify-center p-4">
+    <div onclick="event.stopPropagation()" class="w-full max-w-lg rounded-2xl bg-white text-[#1f1f1f] border border-[#dfdfd8] p-4 space-y-3 shadow-2xl max-h-[85dvh] flex flex-col">
+      <div class="flex items-center justify-between border-b border-[#ececea] pb-2.5 shrink-0">
+        <div class="flex items-center gap-2">
+          <svg class="w-4 h-4 text-[#5f6368]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>
+          <h3 class="text-[14.5px] font-semibold">Customizations (<span id="custHostLabel">vudanhdu-cosmic-spark</span>)</h3>
+        </div>
+        <button type="button" onclick="closeCustomizationsModal()" class="text-[#787878] hover:text-[#1f1f1f] cursor-pointer">✕</button>
+      </div>
+      <div id="customizationsBody" class="overflow-y-auto space-y-3 pr-1 thin-scroll text-[13px]"></div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL 3: SELECT PROJECT                                               -->
+  <!-- ===================================================================== -->
+  <div id="selectProjectModal" onclick="closeSelectProjectModal()" class="hidden fixed inset-0 bg-black/45 z-50 flex items-center justify-center p-4">
+    <div onclick="event.stopPropagation()" class="w-full max-w-sm rounded-2xl bg-white text-[#1f1f1f] border border-[#dfdfd8] p-4 space-y-3 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-[#ececea] pb-2">
+        <h3 class="text-[14.5px] font-semibold">Select Workspace Project</h3>
+        <button type="button" onclick="closeSelectProjectModal()" class="text-[#787878] hover:text-[#1f1f1f] cursor-pointer">✕</button>
+      </div>
+      <div id="selectProjectModalList" class="space-y-1 max-h-72 overflow-y-auto thin-scroll"></div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL 4: SETTINGS + MÃ QR OFFLINE + TRUNG TÂM BẢO MẬT CHỦ ĐỘNG        -->
+  <!-- ===================================================================== -->
+  <div id="settingsModal" onclick="closeSettingsModal()" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+    <div onclick="event.stopPropagation()" class="w-full max-w-2xl rounded-2xl bg-white text-[#1f1f1f] border border-[#dfdfd8] p-5 space-y-4 shadow-2xl max-h-[90dvh] overflow-y-auto thin-scroll">
+      <div class="flex items-center justify-between border-b border-[#ececea] pb-3">
+        <div class="flex items-center gap-2.5">
+          <img src="icons/ui_shield_lead.png" class="w-7 h-7 object-contain" alt="" />
+          <div>
+            <h3 class="text-[15.5px] font-bold text-[#1f1f1f]">Antigravity Settings · Kết Nối QR &amp; Bảo Mật Chủ Động</h3>
+            <p class="text-xs text-[#6e6e6e]">100% Dữ liệu nằm trên ổ cứng máy PC · Đồng bộ Realtime qua WebSocket (/ws)</p>
+          </div>
+        </div>
+        <button type="button" onclick="closeSettingsModal()" class="px-2.5 py-1 rounded-lg bg-[#f3f3f2] hover:bg-[#e5e5e2] text-xs font-medium cursor-pointer">Đóng</button>
+      </div>
+
+      <!-- Khối 1: Mã QR Offline (Wi-Fi LAN & 4G/5G Cloudflare Tunnel) -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+        <div class="p-3.5 rounded-xl bg-[#f9f9f8] border border-[#e3e3e0] flex flex-col items-center text-center space-y-2">
+          <div class="flex items-center gap-1.5">
+            <img src="icons/sb_pc_monitor.png" class="w-4 h-4 object-contain" alt="" />
+            <span class="text-xs font-bold text-[#1f1f1f] uppercase">1. Mạng Wi-Fi LAN (Nội bộ)</span>
+          </div>
+          <div class="p-2 rounded-xl bg-white border border-[#dfdfd8]">
+            <img id="qrLanImg" src="" alt="QR LAN Offline" class="w-36 h-36 object-contain" />
+          </div>
+          <p id="lanUrlText" class="text-xs font-mono text-[#1967d2] break-all select-all"></p>
+          <button onclick="copyLinkText('lanUrlText')" class="w-full py-1.5 rounded-lg bg-white hover:bg-[#f3f3f2] border border-[#dfdfd8] text-xs font-semibold cursor-pointer">
+            Sao chép Link LAN
+          </button>
+        </div>
+
+        <div class="p-3.5 rounded-xl bg-[#f9f9f8] border border-[#e3e3e0] flex flex-col items-center text-center space-y-2">
+          <div class="flex items-center gap-1.5">
+            <img src="icons/sb_globe_system.png" class="w-4 h-4 object-contain" alt="" />
+            <span class="text-xs font-bold text-[#1f1f1f] uppercase">2. Mạng 4G / 5G (Cloudflare Tunnel)</span>
+          </div>
+          <div id="qrTunnelBox" class="w-40 h-40 rounded-xl bg-white border border-[#dfdfd8] flex items-center justify-center p-2">
+            <img id="qrTunnelImg" src="" alt="QR 4G/5G" class="hidden w-36 h-36 object-contain" />
+            <p id="tunnelPlaceholderText" class="text-xs text-[#787878] px-2">Bấm nút bên dưới để mở đường hầm 4G/5G miễn phí</p>
+          </div>
+          <p id="tunnelUrlText" class="text-xs font-mono text-[#188038] break-all select-all"></p>
+          <div class="w-full flex gap-2">
+            <button id="btnToggleTunnel" onclick="toggleCloudflareTunnel()" class="flex-1 py-1.5 rounded-lg bg-[#1967d2] hover:bg-[#1557b0] text-white text-xs font-semibold cursor-pointer">
+              Bật 4G/5G Tunnel
+            </button>
+            <button id="btnCopyTunnel" onclick="copyLinkText('tunnelUrlText')" class="hidden px-3 py-1.5 rounded-lg bg-white border border-[#dfdfd8] text-xs font-semibold cursor-pointer">
+              Copy
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Khối 2: Điều khiển Bảo Mật Chủ Động (Đổi PIN 1-Click, Khóa LAN, Phiên kết nối) -->
+      <div class="p-3.5 rounded-xl bg-[#f9f9f8] border border-[#e3e3e0] space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <img src="icons/menu_9_admin_shield.png" class="w-5 h-5 object-contain" alt="" />
+            <div>
+              <div class="text-[13px] font-bold text-[#1f1f1f]">Kiểm Soát Mã PIN &amp; Tường Lửa Mạng LAN</div>
+              <div id="securityStatusSub" class="text-xs text-[#6e6e6e]">Đang kiểm tra trạng thái bảo mật...</div>
+            </div>
+          </div>
+          <span class="px-2.5 py-0.5 rounded-full bg-[#e6f4ea] text-[#137333] text-xs font-semibold tabular-nums">
+            Mã PIN: <strong id="currentPinBadge">••••••</strong>
+          </span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <div class="p-2.5 rounded-xl bg-white border border-[#dfdfd8] flex items-center justify-between gap-2">
+            <div>
+              <div class="text-xs font-semibold text-[#1f1f1f]">Đổi Mã PIN Mới &amp; Thu Hồi Phiên</div>
+              <div class="text-xs text-[#787878]">Ngắt kết nối ngay mọi thiết bị cũ</div>
+            </div>
+            <button onclick="rotatePinNow()" class="px-3 py-1.5 rounded-lg bg-[#fce8e6] hover:bg-[#fad2cf] text-[#c5221f] text-xs font-bold shrink-0 cursor-pointer">
+              Đổi PIN 1-Click
+            </button>
+          </div>
+
+          <div class="p-2.5 rounded-xl bg-white border border-[#dfdfd8] flex items-center justify-between gap-2">
+            <div>
+              <div class="text-xs font-semibold text-[#1f1f1f]">Cho phép kết nối qua Wi-Fi LAN</div>
+              <div id="lanPolicyDesc" class="text-xs text-[#787878]">Đang mở cho điện thoại cùng Wi-Fi</div>
+            </div>
+            <button id="btnToggleLanPolicy" onclick="toggleLanPolicy()" class="px-3 py-1.5 rounded-lg bg-[#e6f4ea] text-[#137333] text-xs font-bold shrink-0 cursor-pointer">
+              Đang Bật LAN
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+          <div>
+            <div class="text-xs font-semibold text-[#5f6368] mb-1">Thiết bị đang mở phiên (<span id="activeSessionsCount">0</span>)</div>
+            <div id="activeSessionsList" class="space-y-1 max-h-28 overflow-y-auto thin-scroll text-xs"></div>
+          </div>
+          <div>
+            <div class="text-xs font-semibold text-[#5f6368] mb-1">Nhật ký Kiểm Toán Bảo Mật (Audit Log)</div>
+            <div id="securityAuditList" class="space-y-1 max-h-28 overflow-y-auto thin-scroll text-xs"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast thông báo -->
+  <div id="toastBox" class="hidden fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-xl bg-[#1f1f1f] text-white text-xs font-medium shadow-xl"></div>
+
+  <script>
+    // =========================================================================
+    // STATE & CẤU HÌNH TOÀN CỤC
+    // =========================================================================
+    const SLASH_COMMANDS = [
+      { cmd: '/plan', desc: 'Lập kế hoạch từng bước chi tiết trước khi thực thi' },
+      { cmd: '/boost', desc: 'Tư duy sâu đa chiều và kiểm chứng nghiêm ngặt' },
+      { cmd: '/goal', desc: 'Chạy tự động liên tục cho đến khi hoàn thành mục tiêu' },
+      { cmd: '/compact', desc: 'Tóm tắt ngữ cảnh phiên để giải phóng bộ nhớ' },
+      { cmd: '/browser', desc: 'Tự động mở trình duyệt kiểm tra giao diện web' },
+      { cmd: '/grill-me', desc: 'Phỏng vấn làm rõ các quyết định thiết kế hệ thống' },
+      { cmd: '/learn', desc: 'Ghi nhớ quy tắc hoặc bài học mới vào hệ thống' }
+    ];
+
+    let sessionToken = localStorage.getItem('ag_companion_session_token') || '';
+    let savedPin = localStorage.getItem('ag_companion_pin') || '';
+    let overviewData = { host: { name: 'vudanhdu-cosmic-spark', instances: [] }, models: [], pinnedConversations: [], projects: [] };
+    let activeConversationId = null;
+    let activeConversation = null;
+    let targetProjectId = 'e3009192-6136-4652-a8f6-1f1238312ad6';
+    let targetProjectName = 'AG';
+    let selectedModel = { id: 'MODEL_PLACEHOLDER_M417', name: 'Gemini 4 Argon', tier: 'High', label: 'Gemini 4 Argon (High)' };
+    let execMode = 'Turbo';
+    let envMode = 'Local';
+    let collapsedProjects = {};
+    let expandedSeeAllProjects = {};
+    let expandedThinking = {};
+    let expandedTools = {};
+    let filterUnreadOnly = false;
+    let searchQuery = '';
+    let attachedMedia = [];
+    let isSubmitting = false;
+    let sidebarCollapsedDesktop = false;
+    let currentConnectionInfo = null;
+    let wsInstance = null;
+    let wsConnected = false;
+    let wsReconnectTimer = null;
+    let wsPingTimer = null;
+    let prevMsgSig = '';
+
+    // =========================================================================
+    // ĐỔI PIN TRÊN URL -> SESSION TOKEN & XÓA SẠCH ?pin= KHỎI THANH ĐỊA CHỈ
+    // =========================================================================
+    (function initUrlPinScrub() {
+      const qs = new URLSearchParams(window.location.search);
+      const urlPin = qs.get('pin');
+      if (urlPin) {
+        savedPin = urlPin.trim();
+        localStorage.setItem('ag_companion_pin', savedPin);
+        qs.delete('pin');
+        const cleanSearch = qs.toString();
+        const cleanUrl = window.location.pathname + (cleanSearch ? '?' + cleanSearch : '') + window.location.hash;
         window.history.replaceState({}, document.title, cleanUrl);
       }
-    }
-
-    let overviewData = null;
-    let activeCid = null;
-    let activeConvDetail = null;
-    let pendingMedia = [];
-    let currentAllowLan = true;
+    })();
 
     function showToast(msg) {
       const box = document.getElementById('toastBox');
-      document.getElementById('toastText').textContent = msg;
+      box.textContent = msg;
       box.classList.remove('hidden');
-      box.classList.add('flex');
-      setTimeout(() => {
-        box.classList.add('hidden');
-        box.classList.remove('flex');
-      }, 2800);
+      clearTimeout(window.__toastTimer);
+      window.__toastTimer = setTimeout(() => box.classList.add('hidden'), 2600);
     }
 
-    function currentAuthBearer() {
-      return sessionToken || pinCode || '';
+    function escapeHtml(str) {
+      return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
     }
 
-    function authHeaders() {
-      const tok = currentAuthBearer();
-      return {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + tok,
-        'X-Companion-Session': sessionToken,
-      };
+    function mountComposerTo(targetMountId) {
+      const root = document.getElementById('sharedComposerRoot');
+      const mount = document.getElementById(targetMountId);
+      if (root && mount && root.parentElement !== mount) {
+        mount.appendChild(root);
+      }
     }
 
-    async function exchangePinForSessionIfNeeded() {
-      if (urlPin || (!sessionToken && pinCode)) {
+    async function apiFetch(path, options = {}) {
+      const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
+      if (sessionToken) {
+        headers['X-Companion-Session'] = sessionToken;
+        headers['Authorization'] = `Bearer ${sessionToken}`;
+      } else if (savedPin) {
+        headers['X-Companion-Pin'] = savedPin;
+        headers['Authorization'] = `Bearer ${savedPin}`;
+      }
+      const res = await fetch(path, Object.assign({}, options, { headers }));
+      if (res.status === 401 || res.status === 429) {
+        const errData = await res.json().catch(() => ({}));
+        document.getElementById('pinLockModal').classList.remove('hidden');
+        if (errData.error) {
+          const errEl = document.getElementById('pinErrorMsg');
+          errEl.textContent = errData.error;
+          errEl.classList.remove('hidden');
+        }
+        throw new Error(errData.error || 'Unauthorized');
+      }
+      return res.json();
+    }
+
+    async function submitPinUnlock() {
+      const val = document.getElementById('pinInputBox').value.trim();
+      if (!val) return;
+      try {
+        const res = await fetch('/api/ag-companion/auth-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin: val })
+        });
+        const data = await res.json();
+        if (res.ok && data.ok && data.sessionToken) {
+          sessionToken = data.sessionToken;
+          savedPin = '';
+          localStorage.setItem('ag_companion_session_token', sessionToken);
+          localStorage.removeItem('ag_companion_pin');
+          document.getElementById('pinLockModal').classList.add('hidden');
+          document.getElementById('pinErrorMsg').classList.add('hidden');
+          await refreshOverview();
+          connectRealtimeWebSocket();
+        } else {
+          const errEl = document.getElementById('pinErrorMsg');
+          errEl.textContent = data.error || 'Mã PIN không đúng.';
+          errEl.classList.remove('hidden');
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    // =========================================================================
+    // ENGINE ĐỒNG BỘ REALTIME WEBSOCKET (/ws)
+    // =========================================================================
+    function updateWsStatusUi(connected) {
+      wsConnected = connected;
+      const hostDot = document.getElementById('hostStatusDot');
+      const wsBadge = document.getElementById('wsRealtimeBadge');
+      const compDot = document.getElementById('composerWsDot');
+      const compTxt = document.getElementById('composerWsText');
+      if (connected) {
+        if (hostDot) hostDot.className = 'w-2 h-2 rounded-full bg-[#2e7d32] shrink-0';
+        if (wsBadge) { wsBadge.textContent = '● WS Realtime'; wsBadge.className = 'text-[#2e7d32] font-semibold'; }
+        if (compDot) compDot.className = 'w-1.5 h-1.5 rounded-full bg-[#2e7d32]';
+        if (compTxt) compTxt.textContent = 'Realtime WS synced';
+      } else {
+        if (hostDot) hostDot.className = 'w-2 h-2 rounded-full bg-[#fbbc04] shrink-0';
+        if (wsBadge) { wsBadge.textContent = '○ Reconnecting...'; wsBadge.className = 'text-[#fbbc04] font-semibold'; }
+        if (compDot) compDot.className = 'w-1.5 h-1.5 rounded-full bg-[#fbbc04]';
+        if (compTxt) compTxt.textContent = 'Syncing...';
+      }
+    }
+
+    function connectRealtimeWebSocket() {
+      const authParam = sessionToken
+        ? `token=${encodeURIComponent(sessionToken)}`
+        : (savedPin ? `pin=${encodeURIComponent(savedPin)}` : '');
+      if (!authParam) return;
+      if (wsInstance) {
+        try { wsInstance.close(); } catch (e) {}
+        wsInstance = null;
+      }
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const cidQuery = activeConversationId && !activeConversationId.startsWith('pending_')
+        ? `&cid=${encodeURIComponent(activeConversationId)}`
+        : '';
+      const wsUrl = `${proto}//${window.location.host}/ws?${authParam}${cidQuery}`;
+
+      try {
+        const ws = new WebSocket(wsUrl);
+        wsInstance = ws;
+
+        ws.onopen = () => {
+          updateWsStatusUi(true);
+          if (activeConversationId && !activeConversationId.startsWith('pending_')) {
+            try { ws.send(JSON.stringify({ type: 'subscribe', conversationId: activeConversationId })); } catch (e) {}
+          }
+          clearInterval(wsPingTimer);
+          wsPingTimer = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              try { ws.send(JSON.stringify({ type: 'ping' })); } catch (e) {}
+            }
+          }, 15000);
+        };
+
+        ws.onmessage = (ev) => {
+          if (typeof ev.data !== 'string') return;
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg.type === 'overview' && msg.data) {
+              applyOverviewPayload(msg.data);
+            } else if (msg.type === 'conversation' && msg.data && msg.conversationId === activeConversationId) {
+              activeConversation = msg.data;
+              renderActiveConversation();
+            }
+          } catch (e) {}
+        };
+
+        ws.onclose = () => {
+          updateWsStatusUi(false);
+          clearInterval(wsPingTimer);
+          clearTimeout(wsReconnectTimer);
+          wsReconnectTimer = setTimeout(connectRealtimeWebSocket, 2200);
+        };
+
+        ws.onerror = () => {
+          updateWsStatusUi(false);
+        };
+      } catch (e) {
+        clearTimeout(wsReconnectTimer);
+        wsReconnectTimer = setTimeout(connectRealtimeWebSocket, 2800);
+      }
+    }
+
+    // =========================================================================
+    // ĐỒNG BỘ OVERVIEW (HOST, MODELS, PINNED CONVERSATIONS, PROJECTS TREE)
+    // =========================================================================
+    function applyOverviewPayload(data) {
+      if (!data) return;
+      overviewData = data;
+      const hName = (data.host && data.host.name) || 'vudanhdu-cosmic-spark';
+      document.getElementById('hostNameLabel').textContent = hName;
+      document.getElementById('custHostLabel').textContent = hName;
+
+      if (Array.isArray(data.models) && data.models.length > 0) {
+        const found = data.models.find(m => m.id === selectedModel.id) || data.models[0];
+        selectedModel = found;
+        updateSelectedModelUi();
+        renderModelMenuItems();
+      }
+
+      if (Array.isArray(data.projects) && data.projects.length > 0) {
+        const hasTarget = data.projects.some(p => p.id === targetProjectId);
+        if (!hasTarget) {
+          targetProjectId = data.projects[0].id;
+          targetProjectName = data.projects[0].name;
+          document.getElementById('selectedProjectLabel').textContent = targetProjectName;
+        }
+      }
+
+      renderPinnedConversations();
+      renderProjectsTree();
+      renderHostInstancesPopover();
+      renderProjectDropdownItems();
+    }
+
+    async function refreshOverview() {
+      try {
+        const data = await apiFetch('/api/ag-companion/overview');
+        applyOverviewPayload(data);
+      } catch (e) {}
+    }
+
+    function filterConversations(list) {
+      return (list || []).filter(item => {
+        if (filterUnreadOnly && !item.unread && !item.isRunning) return false;
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase();
+          return (
+            (item.title || '').toLowerCase().includes(q) ||
+            (item.projectName || '').toLowerCase().includes(q) ||
+            (item.workspaceTag || '').toLowerCase().includes(q)
+          );
+        }
+        return true;
+      });
+    }
+
+    function renderPinnedConversations() {
+      const wrap = document.getElementById('pinnedSectionWrap');
+      const container = document.getElementById('pinnedListContainer');
+      const pinned = filterConversations(overviewData.pinnedConversations || []);
+      if (pinned.length === 0) {
+        wrap.classList.add('hidden');
+        container.innerHTML = '';
+        return;
+      }
+      wrap.classList.remove('hidden');
+      container.innerHTML = pinned.map(conv => {
+        const isActive = activeConversationId === conv.id;
+        return `
+          <div
+            onclick="openConversation('${escapeHtml(conv.id)}', '${escapeHtml(conv.projectId)}', '${escapeHtml(conv.projectName)}')"
+            class="px-2 py-1.5 rounded-[8px] cursor-pointer transition-colors ${isActive ? 'bg-[#e3e3e0] font-medium text-[#111111]' : 'hover:bg-black/[0.04]'}"
+          >
+            <div class="flex items-baseline justify-between gap-2">
+              <span class="text-[12.5px] text-[#1f1f1f] leading-snug truncate">${escapeHtml(conv.title)}</span>
+              <span class="text-[12px] text-[#787878] shrink-0 tabular-nums">${escapeHtml(conv.relativeTime || '')}</span>
+            </div>
+            <div class="mt-0.5 flex items-center gap-1.5 text-[12px] text-[#787878]">
+              <svg class="w-3 h-3 text-[#8e8e8e] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+              <span class="truncate">${escapeHtml(conv.projectName)}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderProjectsTree() {
+      const container = document.getElementById('projectsTreeContainer');
+      const projs = overviewData.projects || [];
+      if (projs.length === 0) {
+        container.innerHTML = `<div class="px-2 py-4 text-xs text-[#787878]">Đang đồng bộ danh sách dự án...</div>`;
+        return;
+      }
+
+      container.innerHTML = projs.map(proj => {
+        const isCollapsed = !!collapsedProjects[proj.id];
+        const isExpandedAll = !!expandedSeeAllProjects[proj.id];
+        const filtered = filterConversations(proj.conversations || []);
+        const defaultLimit = (proj.name === 'AG' || proj.id === 'e3009192-6136-4652-a8f6-1f1238312ad6') ? 6 : 4;
+        const visibleConvs = isExpandedAll ? filtered : filtered.slice(0, defaultLimit);
+        const totalCount = proj.totalCount || filtered.length;
+
+        const convRowsHtml = !isCollapsed ? `
+          <div class="space-y-0.5">
+            ${visibleConvs.map(conv => {
+              const isActive = activeConversationId === conv.id;
+              const displayTitle = conv.workspaceTag
+                ? `Claude giao · ${conv.workspaceTag} · ${conv.title}`
+                : conv.title;
+
+              let rightIndicator = `<span class="text-[12px] text-[#787878] font-normal tabular-nums">${escapeHtml(conv.relativeTime || '')}</span>`;
+              if (conv.isRunning && !isActive) {
+                rightIndicator = `
+                  <svg class="animate-spin-arc w-[14px] h-[14px] text-[#5f6368]" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-opacity="0.18" stroke-width="2.2"/>
+                    <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                  </svg>
+                `;
+              } else if (conv.unread && !isActive) {
+                rightIndicator = `
+                  <span class="relative flex h-3.5 w-3.5 items-center justify-center">
+                    <span class="absolute inline-flex h-3 w-3 rounded-full bg-[#3b82f6]/20"></span>
+                    <span class="relative inline-flex h-[7px] w-[7px] rounded-full bg-[#3b82f6]"></span>
+                  </span>
+                `;
+              }
+
+              return `
+                <div
+                  onclick="openConversation('${escapeHtml(conv.id)}', '${escapeHtml(proj.id)}', '${escapeHtml(proj.name)}')"
+                  class="flex items-center justify-between pl-6 pr-2 py-1.5 rounded-[8px] cursor-pointer transition-colors gap-2 ${
+                    isActive ? 'bg-[#e3e3e0] font-medium text-[#111111]' : 'text-[#2c2c2c] hover:bg-black/[0.04]'
+                  }"
+                >
+                  <span class="text-[12.5px] leading-snug truncate">${escapeHtml(displayTitle)}</span>
+                  <div class="shrink-0 flex items-center justify-end min-w-[24px]">
+                    ${rightIndicator}
+                  </div>
+                </div>
+              `;
+            }).join('')}
+
+            ${totalCount > defaultLimit ? `
+              <button
+                type="button"
+                onclick="toggleSeeAllProject('${escapeHtml(proj.id)}')"
+                class="pl-6 pr-2 py-1 text-[12px] text-[#787878] hover:text-[#1f1f1f] transition-colors block text-left cursor-pointer"
+              >
+                ${isExpandedAll ? 'Show less' : `See all (${totalCount})`}
+              </button>
+            ` : ''}
+          </div>
+        ` : '';
+
+        return `
+          <div class="space-y-0.5">
+            <div
+              onclick="toggleCollapseProject('${escapeHtml(proj.id)}')"
+              class="group flex items-center justify-between px-1.5 py-1 rounded-[7px] hover:bg-black/[0.04] cursor-pointer transition-colors"
+            >
+              <div class="flex items-center gap-2 min-w-0">
+                <svg class="w-[14px] h-[14px] text-[#6e6e6e] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+                <span class="text-[13px] text-[#4a4a4a] truncate">${escapeHtml(proj.name)}</span>
+              </div>
+              <button
+                type="button"
+                onclick="event.stopPropagation(); selectProjectAndStartNew('${escapeHtml(proj.id)}', '${escapeHtml(proj.name)}')"
+                title="New conversation in ${escapeHtml(proj.name)}"
+                class="p-0.5 rounded text-[#6e6e6e] hover:text-[#1f1f1f] opacity-0 group-hover:opacity-100 hover:bg-black/[0.05] transition-all cursor-pointer"
+              >
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+              </button>
+            </div>
+            ${convRowsHtml}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function toggleCollapseProject(pid) {
+      collapsedProjects[pid] = !collapsedProjects[pid];
+      renderProjectsTree();
+    }
+
+    function toggleSeeAllProject(pid) {
+      expandedSeeAllProjects[pid] = !expandedSeeAllProjects[pid];
+      renderProjectsTree();
+    }
+
+    function toggleFilterUnread() {
+      filterUnreadOnly = !filterUnreadOnly;
+      const btn = document.getElementById('btnFilterUnread');
+      btn.className = `p-0.5 rounded hover:bg-black/[0.05] transition-colors cursor-pointer ${filterUnreadOnly ? 'text-[#3b82f6]' : 'text-[#787878]'}`;
+      renderPinnedConversations();
+      renderProjectsTree();
+    }
+
+    function toggleSearchBar() {
+      const box = document.getElementById('sidebarSearchBox');
+      box.classList.toggle('hidden');
+      if (!box.classList.contains('hidden')) {
+        document.getElementById('sidebarSearchInput').focus();
+      }
+    }
+
+    function handleSearchInput(val) {
+      searchQuery = val || '';
+      renderPinnedConversations();
+      renderProjectsTree();
+    }
+
+    function clearSearchInput() {
+      searchQuery = '';
+      document.getElementById('sidebarSearchInput').value = '';
+      renderPinnedConversations();
+      renderProjectsTree();
+    }
+
+    // =========================================================================
+    // ĐIỀU HƯỚNG GIỮA "+ NEW CONVERSATION" VÀ HỘI THOẠI ĐANG MỞ
+    // =========================================================================
+    function startNewConversation() {
+      activeConversationId = null;
+      activeConversation = null;
+      prevMsgSig = '';
+      document.getElementById('activeConvHeaderBar').classList.add('hidden');
+      document.getElementById('activeConvView').classList.add('hidden');
+      document.getElementById('emptyStateView').classList.remove('hidden');
+      mountComposerTo('emptyComposerMount');
+      renderPinnedConversations();
+      renderProjectsTree();
+      toggleMobileSidebar(false);
+      if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
+        try { wsInstance.send(JSON.stringify({ type: 'subscribe', conversationId: null })); } catch (e) {}
+      }
+      setTimeout(() => document.getElementById('composerTextarea')?.focus(), 60);
+    }
+
+    function selectProjectAndStartNew(pid, pname) {
+      targetProjectId = pid;
+      targetProjectName = pname;
+      document.getElementById('selectedProjectLabel').textContent = pname;
+      closeAllPopovers();
+      closeSelectProjectModal();
+      startNewConversation();
+    }
+
+    async function openConversation(cid, projId, projName) {
+      if (!cid) return;
+      activeConversationId = cid;
+      if (projId) targetProjectId = projId;
+      if (projName) {
+        targetProjectName = projName;
+        document.getElementById('selectedProjectLabel').textContent = projName;
+      }
+      prevMsgSig = '';
+
+      // Chuyển sang màn hình hội thoại
+      document.getElementById('emptyStateView').classList.add('hidden');
+      document.getElementById('activeConvView').classList.remove('hidden');
+      document.getElementById('activeConvHeaderBar').classList.remove('hidden');
+      mountComposerTo('bottomComposerMount');
+      toggleMobileSidebar(false);
+
+      // Xóa chấm xanh unread ngay trên UI
+      (overviewData.projects || []).forEach(p => {
+        (p.conversations || []).forEach(c => {
+          if (c.id === cid) c.unread = false;
+        });
+      });
+      renderPinnedConversations();
+      renderProjectsTree();
+
+      if (wsInstance && wsInstance.readyState === WebSocket.OPEN && !cid.startsWith('pending_')) {
+        try { wsInstance.send(JSON.stringify({ type: 'subscribe', conversationId: cid })); } catch (e) {}
+      }
+
+      if (!cid.startsWith('pending_')) {
+        document.getElementById('messagesListContainer').innerHTML = `
+          <div class="py-20 flex flex-col items-center justify-center gap-2.5 text-[#787878]">
+            <svg class="animate-spin-arc w-6 h-6 text-[#1967d2]" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-opacity="0.18" stroke-width="2.2"/>
+              <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+            </svg>
+            <span class="text-[13.5px]">Loading conversation trajectory...</span>
+          </div>
+        `;
         try {
-          const res = await fetch('/api/ag-companion/auth-session', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pin: urlPin || pinCode }),
-          });
-          const data = await res.json();
-          if (res.ok && data.sessionToken) {
-            sessionToken = data.sessionToken;
-            localStorage.setItem('ag_selfhost_session', sessionToken);
+          const detail = await apiFetch(`/api/ag-companion/conversation/${encodeURIComponent(cid)}?markRead=1`);
+          if (activeConversationId === cid) {
+            activeConversation = detail;
+            renderActiveConversation();
           }
         } catch (e) {}
       }
     }
 
-    async function apiFetch(path, opts = {}) {
-      opts.headers = Object.assign(authHeaders(), opts.headers || {});
-      const res = await fetch(path, opts);
-      let data = {};
-      try {
-        data = await res.json();
-      } catch (e) {}
-      if (res.status === 401 || res.status === 429) {
-        const modal = document.getElementById('pinModal');
-        modal.classList.remove('hidden');
-        modal.classList.add('flex');
-        const err = document.getElementById('pinError');
-        if (data && data.error) {
-          err.textContent = data.error;
-          err.classList.remove('hidden');
+    // =========================================================================
+    // HIỂN THỊ DÒNG CHẢY HỘI THOẠI (THINKING, TOOL CALLS, CODE BLOCK, MEDIA)
+    // =========================================================================
+    function formatMarkdownContent(rawText, msgId) {
+      if (!rawText) return '';
+      const segments = String(rawText).split(/(```[\s\S]*?```)/g);
+      return segments.map((seg, idx) => {
+        if (seg.startsWith('```') && seg.endsWith('```')) {
+          const nl = seg.indexOf('\n');
+          const lang = nl > 3 ? seg.slice(3, nl).trim() : 'code';
+          const codeBody = nl > -1 ? seg.slice(nl + 1, -3) : seg.slice(3, -3);
+          const codeId = `code_${msgId}_${idx}`;
+          return `
+            <div class="my-2.5 rounded-xl overflow-hidden border border-[#e0e0de] bg-[#1e1e1e]">
+              <div class="flex items-center justify-between px-3.5 py-1.5 bg-[#262626] border-b border-[#343434] text-[12px] text-[#a0a0a0] font-mono">
+                <span>${escapeHtml(lang || 'text')}</span>
+                <button
+                  type="button"
+                  onclick="copyCodeSnippet('${codeId}')"
+                  class="text-[#b8b8b8] hover:text-white transition-colors cursor-pointer"
+                >Copy</button>
+              </div>
+              <pre id="${codeId}" class="p-3.5 text-[13px] font-mono text-[#e8e8e8] overflow-x-auto leading-relaxed thin-scroll"><code>${escapeHtml(codeBody)}</code></pre>
+            </div>
+          `;
         }
-        throw new Error(data.error || 'Unauthorized');
-      }
-      return data;
+
+        return seg.split('\n').map(line => {
+          const trimmed = line.trim();
+          if (!trimmed) return '<div class="h-1.5"></div>';
+          if (/^(Kế hoạch|Tiến độ):/i.test(trimmed)) {
+            return `
+              <div class="my-1.5 px-3 py-2 rounded-lg border bg-[#eef4ff] border-[#d0e0ff] text-[#1967d2] text-[13.5px] font-medium flex items-center gap-2">
+                <span>✦</span>
+                <span>${escapeHtml(trimmed)}</span>
+              </div>
+            `;
+          }
+          if (trimmed.startsWith('### ')) {
+            return `<h4 class="text-[15.5px] font-semibold pt-2 pb-0.5 text-[#111111]">${formatInlineMd(trimmed.slice(4))}</h4>`;
+          }
+          if (trimmed.startsWith('## ')) {
+            return `<h3 class="text-[16.5px] font-bold pt-2.5 pb-1 text-[#111111]">${formatInlineMd(trimmed.slice(3))}</h3>`;
+          }
+          if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+            return `
+              <div class="flex items-start gap-2 pl-1">
+                <span class="text-[#8e8e8e] mt-1.5 text-xs">●</span>
+                <span class="flex-1">${formatInlineMd(trimmed.slice(2))}</span>
+              </div>
+            `;
+          }
+          return `<p>${formatInlineMd(line)}</p>`;
+        }).join('');
+      }).join('');
     }
 
-    async function submitPin() {
-      const val = document.getElementById('pinInput').value.trim();
-      if (!val) return;
-      const err = document.getElementById('pinError');
-      err.classList.add('hidden');
-      try {
-        const res = await fetch('/api/ag-companion/auth-session', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pin: val }),
-        });
-        const data = await res.json();
-        if (!res.ok || !data.ok) {
-          err.textContent = data.error || 'Mã PIN không chính xác.';
-          err.classList.remove('hidden');
-          return;
-        }
-        pinCode = val;
-        sessionToken = data.sessionToken || '';
-        localStorage.setItem('ag_selfhost_pin', pinCode);
-        if (sessionToken) localStorage.setItem('ag_selfhost_session', sessionToken);
-        document.getElementById('pinModal').classList.add('hidden');
-        document.getElementById('pinModal').classList.remove('flex');
-        showToast('Đã mở khóa kết nối bảo mật!');
-        await loadOverview();
-      } catch (e) {
-        err.textContent = e.message || 'Lỗi kết nối máy chủ.';
-        err.classList.remove('hidden');
-      }
+    function formatInlineMd(text) {
+      let s = escapeHtml(text);
+      s = s.replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 mx-0.5 rounded font-mono text-[12.5px] bg-[#ececea] text-[#c5221f]">$1</code>');
+      s = s.replace(/\*\*([^*]+)\*\*/g, '<strong class="font-semibold text-[#111111]">$1</strong>');
+      s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="text-[#1967d2] underline underline-offset-2 break-all">$1</a>');
+      return s;
     }
 
-    function toggleSidebar() {
-      document.getElementById('sidebar').classList.toggle('-translate-x-full');
-    }
-
-    function updateModelsDropdown(models) {
-      if (!Array.isArray(models) || models.length === 0) return;
-      const sel = document.getElementById('modelSelect');
-      const prev = sel.value;
-      sel.innerHTML = '';
-      models.forEach(m => {
-        const opt = document.createElement('option');
-        opt.value = m.id;
-        const pct = Math.round((typeof m.remainingFraction === 'number' ? m.remainingFraction : 1) * 100);
-        opt.textContent = `${m.label} • ${pct}%`;
-        sel.appendChild(opt);
-      });
-      if (prev && Array.from(sel.options).some(o => o.value === prev)) {
-        sel.value = prev;
+    function copyCodeSnippet(elId) {
+      const el = document.getElementById(elId);
+      if (el) {
+        navigator.clipboard?.writeText(el.innerText || el.textContent || '');
+        showToast('Đã sao chép đoạn code!');
       }
     }
 
-    async function loadOverview() {
-      overviewData = await apiFetch('/api/ag-companion/overview');
-      const host = overviewData.host || {};
-      const acctInfo = host.accountEmail ? ` • ${host.accountEmail}` : '';
-      document.getElementById('hostSubtitle').textContent =
-        (host.online ? 'Đang kết nối Antigravity Desktop • ' : 'Chờ mở Antigravity Desktop • ') +
-        (host.name || '') + acctInfo;
-
-      updateModelsDropdown(overviewData.models || []);
-
-      const pSel = document.getElementById('projectSelect');
-      const prevProj = pSel.value;
-      pSel.innerHTML = '';
-      (overviewData.projects || []).forEach(p => {
-        const opt = document.createElement('option');
-        opt.value = p.id;
-        opt.textContent = `${p.name} (${(p.conversations || []).length})`;
-        pSel.appendChild(opt);
-      });
-      if (prevProj && Array.from(pSel.options).some(o => o.value === prevProj)) {
-        pSel.value = prevProj;
-      }
-      renderConversations();
-      if (activeCid) {
-        await loadConversationDetail(activeCid);
-      }
+    function resolveMediaUrl(m) {
+      if (m.dataUrl) return m.dataUrl;
+      if (!m.url) return '';
+      const sep = m.url.includes('?') ? '&' : '?';
+      const tok = sessionToken ? `token=${encodeURIComponent(sessionToken)}` : (savedPin ? `pin=${encodeURIComponent(savedPin)}` : '');
+      return tok ? `${m.url}${sep}${tok}` : m.url;
     }
 
-    function renderConversations() {
-      if (!overviewData) return;
-      const pid = document.getElementById('projectSelect').value;
-      const q = (document.getElementById('convSearchInput').value || '').trim().toLowerCase();
-      const proj = (overviewData.projects || []).find(p => p.id === pid) || (overviewData.projects || [])[0];
-      const box = document.getElementById('convList');
-      box.innerHTML = '';
+    function renderMessageMediaHtml(msg) {
+      const list = msg.media || [];
+      if (!list.length) return '';
+      return `
+        <div class="flex flex-wrap gap-2 mb-2">
+          ${list.map(att => {
+            const src = resolveMediaUrl(att);
+            if (!src) return '';
+            if ((att.mimeType || '').startsWith('image/')) {
+              return `
+                <a href="${escapeHtml(src)}" target="_blank" class="block rounded-xl overflow-hidden border border-black/10 max-w-[280px] max-h-[250px] shadow-xs">
+                  <img src="${escapeHtml(src)}" alt="${escapeHtml(att.name || 'image')}" class="max-w-full max-h-[246px] object-contain bg-black/5" loading="lazy" />
+                </a>
+              `;
+            }
+            return `
+              <a href="${escapeHtml(src)}" target="_blank" class="flex items-center gap-2 px-3 py-2 rounded-xl border bg-white border-[#d8d8d4] text-[#1967d2] text-[12.5px]">
+                <span>📎</span>
+                <span class="truncate max-w-[200px]">${escapeHtml(att.name || 'Attachment')}</span>
+              </a>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
 
-      let convs = proj ? (proj.conversations || []).slice() : [];
-      if (q) {
-        convs = convs.filter(c => String(c.title || '').toLowerCase().includes(q));
-      }
-      convs.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.lastModifiedEpoch || 0) - (a.lastModifiedEpoch || 0));
+    function renderActiveConversation() {
+      if (!activeConversation) return;
+      document.getElementById('headerConvProject').textContent = activeConversation.projectName || targetProjectName;
+      document.getElementById('headerConvTitle').textContent = activeConversation.title || 'Conversation';
 
-      if (!activeCid && convs.length > 0) {
-        activeCid = convs[0].id;
-        loadConversationDetail(activeCid);
-      }
+      const spinEl = document.getElementById('headerRunningSpinner');
+      const isRun = !!activeConversation.isRunning || isSubmitting;
+      spinEl.classList.toggle('hidden', !isRun);
+      updateComposerButtonState();
 
-      if (convs.length === 0) {
-        box.innerHTML = '<div class="p-4 text-center text-xs text-slate-500">Không có phiên nào khớp bộ lọc.</div>';
+      const pinBtn = document.getElementById('headerPinBtn');
+      pinBtn.className = `p-1 rounded-md transition-colors cursor-pointer ${
+        activeConversation.pinned ? 'text-[#1967d2] bg-[#eef4ff]' : 'text-[#787878] hover:text-[#1f1f1f] hover:bg-black/[0.04]'
+      }`;
+
+      const msgs = activeConversation.messages || [];
+      const container = document.getElementById('messagesListContainer');
+      if (msgs.length === 0) {
+        container.innerHTML = `<div class="py-12 text-center text-[13.5px] text-[#787878]">No steps recorded yet. Enter a message below to continue.</div>`;
         return;
       }
 
-      convs.forEach(c => {
-        const btn = document.createElement('button');
-        const isAct = c.id === activeCid;
-        btn.className = `w-full text-left p-2.5 rounded-xl transition-all flex flex-col gap-1 border ${
-          isAct
-            ? 'bg-indigo-600/90 border-indigo-400/50 text-white shadow-md'
-            : 'bg-slate-950/50 border-slate-800/70 hover:bg-slate-800 text-slate-300'
-        }`;
-        btn.onclick = () => {
-          activeCid = c.id;
-          renderConversations();
-          loadConversationDetail(c.id);
-          if (window.innerWidth < 768) toggleSidebar();
-        };
-        btn.innerHTML = `
-          <div class="text-xs font-bold truncate flex items-center justify-between gap-1.5">
-            <div class="flex items-center gap-1.5 truncate">
-              ${c.pinned ? '<img src="icons/ui_crown_top1.png" alt="Pinned" class="w-3.5 h-3.5 icon-3d shrink-0" />' : ''}
-              <span class="truncate">${escapeHtml(c.title)}</span>
-            </div>
-            ${c.isRunning ? '<span class="w-2 h-2 rounded-full bg-amber-400 animate-ping shrink-0"></span>' : ''}
-          </div>
-          <div class="text-xs opacity-75 flex items-center justify-between tabular-nums">
-            <span>${c.stepCount || 0} bước</span>
-            <span>${escapeHtml(c.relativeTime || '')}</span>
-          </div>
-        `;
-        box.appendChild(btn);
-      });
-    }
-
-    async function loadConversationDetail(cid) {
-      const data = await apiFetch('/api/ag-companion/conversation/' + encodeURIComponent(cid));
-      activeConvDetail = data;
-      const box = document.getElementById('messagesBox');
-      const wasNearBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) < 120;
-      box.innerHTML = '';
-
-      document.getElementById('activeConvTitle').textContent = data.title || ('Phiên ' + cid.slice(0, 8));
-      document.getElementById('statusBadge').textContent = data.isRunning ? 'Đang thực thi trên PC...' : 'Sẵn sàng';
-
-      const pinBtn = document.getElementById('btnPinActive');
-      pinBtn.classList.remove('hidden');
-      pinBtn.classList.add('flex');
-      document.getElementById('btnPinText').textContent = data.pinned ? 'Bỏ ghim' : 'Ghim';
-
-      const cancelBtn = document.getElementById('btnCancelActive');
-      if (data.isRunning) {
-        cancelBtn.classList.remove('hidden');
-        cancelBtn.classList.add('flex');
-      } else {
-        cancelBtn.classList.add('hidden');
-        cancelBtn.classList.remove('flex');
-      }
-
-      const progBanner = document.getElementById('liveProgressBanner');
-      if (data.planText || data.progressText) {
-        progBanner.classList.remove('hidden');
-        progBanner.classList.add('flex');
-        document.getElementById('planBannerLine').textContent = data.planText || '';
-        document.getElementById('progressBannerLine').textContent = data.progressText || '';
-      } else {
-        progBanner.classList.add('hidden');
-        progBanner.classList.remove('flex');
-      }
-
-      const authTok = encodeURIComponent(currentAuthBearer());
-      (data.messages || []).forEach(m => {
-        const isUser = m.role === 'user';
-        const wrap = document.createElement('div');
-        wrap.className = `flex flex-col ${isUser ? 'items-end' : 'items-start'}`;
-
-        let mediaHtml = '';
-        if (Array.isArray(m.media) && m.media.length > 0) {
-          mediaHtml = '<div class="flex flex-wrap gap-2 mb-2">' + m.media.map(item => {
-            const u = (item.url || '') + (item.url && item.url.includes('?') ? '&' : '?') + 'token=' + authTok;
-            if ((item.mimeType || '').startsWith('image/')) {
-              return `<a href="${u}" target="_blank"><img src="${u}" class="max-h-48 rounded-xl border border-white/20" /></a>`;
-            }
-            return `<a href="${u}" target="_blank" class="px-2.5 py-1.5 rounded-lg bg-slate-800 text-xs underline flex items-center gap-1.5"><img src="icons/cat_prompt_scroll.png" class="w-4 h-4 icon-3d" /><span>${escapeHtml(item.name || 'File')}</span></a>`;
-          }).join('') + '</div>';
-        }
-
-        let thoughtHtml = '';
-        if (m.thinking) {
-          thoughtHtml = `
-            <details class="mb-2 bg-slate-950/90 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-400 w-full">
-              <summary class="cursor-pointer font-bold text-slate-300 flex items-center gap-1.5">
-                <img src="icons/quest_brain.png" alt="" class="w-4 h-4 icon-3d" />
-                <span>Luồng suy nghĩ (${m.thinkingSeconds || 1}s)</span>
-              </summary>
-              <div class="mt-2 whitespace-pre-wrap leading-relaxed text-slate-300 border-t border-slate-800 pt-2">${escapeHtml(m.thinking)}</div>
-            </details>
-          `;
-        }
-
-        let toolsHtml = '';
-        if (Array.isArray(m.toolCalls) && m.toolCalls.length > 0) {
-          toolsHtml = `
-            <details class="mb-2 bg-slate-950/80 border border-indigo-500/25 rounded-xl p-2.5 text-xs text-slate-300 w-full">
-              <summary class="cursor-pointer font-bold text-indigo-300 flex items-center gap-1.5">
-                <img src="icons/quest_lightning.png" alt="" class="w-4 h-4 icon-3d" />
-                <span>Đã chạy ${m.toolCalls.length} công cụ trên PC</span>
-              </summary>
-              <div class="mt-2 space-y-1.5 border-t border-slate-800 pt-2">
-                ${m.toolCalls.map(tc => `
-                  <div class="p-2 rounded-lg bg-slate-900 border border-slate-800 space-y-1">
-                    <div class="flex items-center justify-between gap-2 font-bold text-xs">
-                      <span class="text-cyan-300 truncate">${escapeHtml(tc.summary || tc.name)}</span>
-                      <span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 text-xs">${escapeHtml(tc.status || 'done')}</span>
-                    </div>
-                    ${tc.command ? `<code class="block text-xs text-amber-300 truncate">${escapeHtml(tc.command)}</code>` : ''}
-                    ${tc.path ? `<div class="text-xs text-slate-400 truncate">${escapeHtml(tc.path)}</div>` : ''}
-                  </div>
-                `).join('')}
+      container.innerHTML = msgs.map(msg => {
+        if (msg.role === 'user') {
+          return `
+            <div class="flex justify-end">
+              <div class="max-w-[82%] rounded-2xl bg-[#ececea] border border-[#dfdfd8] px-4 py-2.5 text-[14.5px] text-[#1f1f1f] leading-relaxed whitespace-pre-wrap break-words">
+                ${renderMessageMediaHtml(msg)}
+                ${escapeHtml(msg.content || '')}
               </div>
-            </details>
+            </div>
           `;
         }
 
-        wrap.innerHTML = `
-          <div class="max-w-[90%] sm:max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${
-            isUser
-              ? 'bg-gradient-to-br from-indigo-600 to-blue-600 text-white'
-              : 'bg-slate-900 border border-slate-800 text-slate-100'
-          }">
-            ${mediaHtml}
-            ${thoughtHtml}
+        const isThinkOpen = !!expandedThinking[msg.id];
+        const thinkHtml = msg.thinking ? `
+          <div class="rounded-xl bg-white border border-[#e3e3e0] overflow-hidden shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+            <button
+              type="button"
+              onclick="toggleThinkingBlock('${escapeHtml(msg.id)}')"
+              class="w-full px-3.5 py-2 flex items-center justify-between text-[12.5px] text-[#5f6368] hover:text-[#1f1f1f] transition-colors cursor-pointer"
+            >
+              <span class="flex items-center gap-2">
+                <span class="text-[#1967d2]">✦</span>
+                <span>Thought${msg.thinkingSeconds ? ` for ${msg.thinkingSeconds}s` : ''}</span>
+              </span>
+              <span>${isThinkOpen ? '▴' : '▸'}</span>
+            </button>
+            ${isThinkOpen ? `
+              <div class="px-3.5 pb-3 pt-1.5 text-[12.5px] text-[#5f6368] border-t border-[#ededeb] whitespace-pre-wrap leading-relaxed font-mono bg-[#fcfcfb]">
+                ${escapeHtml(msg.thinking)}
+              </div>
+            ` : ''}
+          </div>
+        ` : '';
+
+        const tools = msg.toolCalls || [];
+        const toolsHtml = tools.length > 0 ? `
+          <div class="space-y-1.5">
+            ${tools.map((tc, tIdx) => {
+              const tKey = `${msg.id}_tool_${tIdx}`;
+              const isToolOpen = !!expandedTools[tKey];
+              const isCmd = (tc.name || '').includes('command') || (tc.name || '').includes('terminal');
+              const label = tc.summary || tc.path || tc.command || tc.name;
+              return `
+                <div class="rounded-xl bg-white border border-[#e3e3e0] overflow-hidden">
+                  <button
+                    type="button"
+                    onclick="toggleToolBlock('${escapeHtml(tKey)}')"
+                    class="w-full px-3 py-2 flex items-center justify-between gap-2 text-left text-[12.5px] text-[#3c3c3c] hover:bg-black/[0.02] cursor-pointer"
+                  >
+                    <div class="flex items-center gap-2 min-w-0">
+                      <span class="text-xs font-mono px-1.5 py-0.5 rounded ${isCmd ? 'bg-[#eef4ff] text-[#1967d2]' : 'bg-[#e6f4ea] text-[#188038]'} shrink-0">
+                        ${isCmd ? '>_ CMD' : 'FILE'}
+                      </span>
+                      <span class="truncate font-mono">${escapeHtml(label)}</span>
+                    </div>
+                    <div class="flex items-center gap-1.5 shrink-0">
+                      ${tc.status === 'running' ? `
+                        <svg class="animate-spin-arc w-3.5 h-3.5 text-[#1967d2]" viewBox="0 0 24 24" fill="none">
+                          <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-opacity="0.18" stroke-width="2.2"/>
+                          <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                        </svg>
+                      ` : `<span class="text-[#188038] text-xs font-bold">✓</span>`}
+                      <span class="text-[#787878] text-xs">${isToolOpen ? '▴' : '▾'}</span>
+                    </div>
+                  </button>
+                  ${isToolOpen && (tc.command || tc.path || tc.output) ? `
+                    <div class="px-3 py-2 bg-[#1e1e1e] text-[12px] font-mono text-[#d4d4d4] space-y-1.5 overflow-x-auto thin-scroll">
+                      ${tc.command ? `<div class="text-[#8ab4f8]">$ ${escapeHtml(tc.command)}</div>` : ''}
+                      ${tc.path ? `<div class="text-[#81c995]">File: ${escapeHtml(tc.path)}</div>` : ''}
+                      ${tc.output ? `<pre class="text-[#c4c4c4] whitespace-pre-wrap max-h-52 overflow-y-auto">${escapeHtml(tc.output)}</pre>` : ''}
+                    </div>
+                  ` : ''}
+                </div>
+              `;
+            }).join('')}
+          </div>
+        ` : '';
+
+        return `
+          <div class="space-y-2.5 text-[14.5px] leading-[1.65] text-[#1f1f1f] break-words">
+            ${thinkHtml}
             ${toolsHtml}
-            <div class="whitespace-pre-wrap break-words">${escapeHtml(m.content || '')}</div>
+            ${renderMessageMediaHtml(msg)}
+            ${msg.content ? `<div class="space-y-2 pl-0.5">${formatMarkdownContent(msg.content, msg.id)}</div>` : ''}
           </div>
         `;
-        box.appendChild(wrap);
-      });
+      }).join('');
 
-      if (wasNearBottom) {
-        box.scrollTop = box.scrollHeight;
+      const last = msgs[msgs.length - 1];
+      const newSig = `${activeConversation.id}:${msgs.length}:${last?.id}:${(last?.content || '').length}:${(last?.toolCalls || []).length}`;
+      if (newSig !== prevMsgSig) {
+        prevMsgSig = newSig;
+        const sc = document.getElementById('messagesScrollArea');
+        setTimeout(() => { sc.scrollTop = sc.scrollHeight; }, 50);
       }
     }
 
-    async function togglePinActive() {
-      if (!activeCid) return;
-      const nextPin = !(activeConvDetail && activeConvDetail.pinned);
-      await apiFetch('/api/ag-companion/pin', {
-        method: 'POST',
-        body: JSON.stringify({ conversationId: activeCid, pinned: nextPin }),
-      });
-      showToast(nextPin ? 'Đã ghim phiên làm việc!' : 'Đã bỏ ghim phiên!');
-      await loadOverview();
+    function toggleThinkingBlock(msgId) {
+      expandedThinking[msgId] = !expandedThinking[msgId];
+      renderActiveConversation();
     }
 
-    async function cancelActiveConv() {
-      if (!activeCid) return;
-      await apiFetch('/api/ag-companion/cancel', {
-        method: 'POST',
-        body: JSON.stringify({ conversationId: activeCid }),
-      });
-      showToast('Đã gửi lệnh dừng tác vụ tới Antigravity Desktop!');
-      await loadOverview();
+    function toggleToolBlock(toolKey) {
+      expandedTools[toolKey] = !expandedTools[toolKey];
+      renderActiveConversation();
     }
 
-    function startNewConvMode() {
-      activeCid = null;
-      activeConvDetail = null;
-      document.getElementById('activeConvTitle').textContent = 'Tạo phiên giao việc mới trên PC';
-      document.getElementById('btnPinActive').classList.add('hidden');
-      document.getElementById('btnCancelActive').classList.add('hidden');
-      document.getElementById('liveProgressBanner').classList.add('hidden');
-      document.getElementById('messagesBox').innerHTML = `
-        <div class="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400 space-y-3">
-          <img src="icons/quest_rocket.png" alt="New Task" class="w-14 h-14 icon-3d" />
-          <div class="text-base font-bold text-white">Giao việc mới trực tiếp vào cửa sổ Antigravity trên PC</div>
-          <p class="text-xs max-w-md leading-relaxed">
-            Chọn Dự án (Project) ở cột trái, chọn Model AI bên dưới và nhập yêu cầu hoặc đính kèm ảnh chụp màn hình. Toàn bộ dữ liệu được xử lý cục bộ 100% trên máy tính của bạn.
-          </p>
-        </div>
-      `;
-      document.getElementById('promptInput').focus();
+    async function toggleActiveConvPin() {
+      if (!activeConversation) return;
+      const nextPinned = !activeConversation.pinned;
+      try {
+        await apiFetch('/api/ag-companion/pin', {
+          method: 'POST',
+          body: JSON.stringify({ conversationId: activeConversation.id, pinned: nextPinned })
+        });
+        activeConversation.pinned = nextPinned;
+        renderActiveConversation();
+        refreshOverview();
+        showToast(nextPinned ? 'Đã ghim vào Pinned Conversations' : 'Đã bỏ ghim hội thoại');
+      } catch (e) {}
     }
 
-    function handleFilesSelected(ev) {
-      const files = Array.from(ev.target.files || []);
-      files.forEach(file => {
+    // =========================================================================
+    // COMPOSER CONTROLS: GỬI LỆNH, DỪNG TÁC VỤ, SLASH (/), MENTION (@), MEDIA
+    // =========================================================================
+    function handlePromptInput(el) {
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+      const val = el.value;
+      updateComposerButtonState();
+
+      const slashPop = document.getElementById('slashMenuPopover');
+      const mentionPop = document.getElementById('mentionMenuPopover');
+
+      if (val === '/' || (val.startsWith('/') && !val.includes(' '))) {
+        renderSlashMenu(val);
+        slashPop.classList.remove('hidden');
+        mentionPop.classList.add('hidden');
+      } else if (val.endsWith('@') || /@\w*$/.test(val)) {
+        renderMentionMenu();
+        mentionPop.classList.remove('hidden');
+        slashPop.classList.add('hidden');
+      } else {
+        slashPop.classList.add('hidden');
+        mentionPop.classList.add('hidden');
+      }
+    }
+
+    function updateComposerButtonState() {
+      const ta = document.getElementById('composerTextarea');
+      const btn = document.getElementById('composerSubmitBtn');
+      const arrow = document.getElementById('submitArrowIcon');
+      const stop = document.getElementById('stopSquareIcon');
+      if (!btn || !ta) return;
+
+      const isRun = (activeConversation && activeConversation.isRunning) || isSubmitting;
+      if (isRun) {
+        arrow.classList.add('hidden');
+        stop.classList.remove('hidden');
+        btn.className = 'w-7 h-7 rounded-full bg-[#fce8e6] hover:bg-[#f8d7da] text-[#d93025] flex items-center justify-center transition-all cursor-pointer';
+        btn.title = 'Stop running task';
+      } else {
+        arrow.classList.remove('hidden');
+        stop.classList.add('hidden');
+        const hasInput = ta.value.trim().length > 0 || attachedMedia.length > 0;
+        btn.className = `w-7 h-7 rounded-full flex items-center justify-center transition-all cursor-pointer ${
+          hasInput ? 'bg-[#1f1f1f] text-white shadow-xs' : 'bg-[#e4e4e2] text-[#6e6e6e]'
+        }`;
+        btn.title = 'Submit';
+      }
+    }
+
+    function handleSubmitOrStop() {
+      const isRun = (activeConversation && activeConversation.isRunning) || isSubmitting;
+      if (isRun) {
+        stopActiveConversation();
+      } else {
+        submitPrompt();
+      }
+    }
+
+    async function submitPrompt() {
+      const ta = document.getElementById('composerTextarea');
+      const text = (ta.value || '').trim();
+      const mediaToSend = [...attachedMedia];
+      if ((!text && mediaToSend.length === 0) || isSubmitting) return;
+
+      ta.value = '';
+      ta.style.height = 'auto';
+      attachedMedia = [];
+      renderComposerAttachments();
+      closeAllPopovers();
+      isSubmitting = true;
+      updateComposerButtonState();
+
+      const nowMs = Date.now();
+      const autoTitle = text ? text.split('\n')[0].slice(0, 70) : 'Media Attachment';
+
+      if (activeConversationId && !activeConversationId.startsWith('pending_')) {
+        const targetCid = activeConversationId;
+        if (activeConversation) {
+          activeConversation.isRunning = true;
+          activeConversation.messages = activeConversation.messages || [];
+          activeConversation.messages.push({
+            id: `opt_u_${nowMs}`,
+            role: 'user',
+            content: text,
+            media: mediaToSend,
+            timestamp: nowMs
+          });
+          renderActiveConversation();
+        }
+        try {
+          await apiFetch('/api/ag-companion/send', {
+            method: 'POST',
+            body: JSON.stringify({
+              conversationId: targetCid,
+              text: text,
+              media: mediaToSend,
+              model: selectedModel.id
+            })
+          });
+        } catch (e) {
+          showToast('Lỗi gửi tin nhắn: ' + e.message);
+        } finally {
+          isSubmitting = false;
+          updateComposerButtonState();
+          refreshOverview();
+        }
+        return;
+      }
+
+      // Đang ở "+ New Conversation" -> Tạo phiên mới
+      const pendingCid = `pending_${nowMs}`;
+      activeConversationId = pendingCid;
+      activeConversation = {
+        id: pendingCid,
+        title: autoTitle,
+        projectId: targetProjectId,
+        projectName: targetProjectName,
+        isRunning: true,
+        pinned: false,
+        stepCount: 1,
+        messages: [{
+          id: `opt_u_${nowMs}`,
+          role: 'user',
+          content: text,
+          media: mediaToSend,
+          timestamp: nowMs
+        }]
+      };
+      document.getElementById('emptyStateView').classList.add('hidden');
+      document.getElementById('activeConvView').classList.remove('hidden');
+      document.getElementById('activeConvHeaderBar').classList.remove('hidden');
+      mountComposerTo('bottomComposerMount');
+      renderActiveConversation();
+
+      try {
+        const res = await apiFetch('/api/ag-companion/new', {
+          method: 'POST',
+          body: JSON.stringify({
+            projectId: targetProjectId,
+            prompt: text,
+            title: autoTitle,
+            media: mediaToSend,
+            model: selectedModel.id
+          })
+        });
+        if (res && res.conversationId) {
+          activeConversationId = res.conversationId;
+          activeConversation.id = res.conversationId;
+          if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
+            try { wsInstance.send(JSON.stringify({ type: 'subscribe', conversationId: res.conversationId })); } catch (e) {}
+          }
+        }
+      } catch (e) {
+        showToast('Lỗi tạo hội thoại: ' + e.message);
+      } finally {
+        isSubmitting = false;
+        updateComposerButtonState();
+        refreshOverview();
+      }
+    }
+
+    async function stopActiveConversation() {
+      if (!activeConversationId || activeConversationId.startsWith('pending_')) {
+        isSubmitting = false;
+        updateComposerButtonState();
+        return;
+      }
+      try {
+        await apiFetch('/api/ag-companion/cancel', {
+          method: 'POST',
+          body: JSON.stringify({ conversationId: activeConversationId })
+        });
+        if (activeConversation) activeConversation.isRunning = false;
+        isSubmitting = false;
+        renderActiveConversation();
+        showToast('Đã gửi lệnh dừng tác vụ');
+      } catch (e) {}
+    }
+
+    // =========================================================================
+    // ĐÍNH KÈM MEDIA (FILE, ẢNH, PASTE CLIPBOARD, DRAG & DROP) + GIỌNG NÓI
+    // =========================================================================
+    function handleFilesSelected(fileList) {
+      if (!fileList) return;
+      Array.from(fileList).slice(0, 8).forEach(file => {
+        if (file.size > 25 * 1024 * 1024) {
+          showToast(`File ${file.name} vượt quá 25MB`);
+          return;
+        }
         const reader = new FileReader();
         reader.onload = () => {
-          pendingMedia.push({ name: file.name, mimeType: file.type || 'application/octet-stream', dataUrl: reader.result });
-          renderPendingMedia();
+          if (typeof reader.result === 'string') {
+            attachedMedia.push({
+              name: file.name || 'image.png',
+              mimeType: file.type || 'image/png',
+              dataUrl: reader.result,
+              size: file.size
+            });
+            renderComposerAttachments();
+            updateComposerButtonState();
+          }
         };
         reader.readAsDataURL(file);
       });
-      ev.target.value = '';
     }
 
-    function renderPendingMedia() {
-      const bar = document.getElementById('mediaPreviewBar');
-      if (pendingMedia.length === 0) {
-        bar.classList.add('hidden');
-        bar.innerHTML = '';
+    function handlePasteMedia(e) {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const files = [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].kind === 'file') {
+          const f = items[i].getAsFile();
+          if (f) files.push(f);
+        }
+      }
+      if (files.length > 0) {
+        e.preventDefault();
+        handleFilesSelected(files);
+        showToast(`Đã đính kèm ${files.length} ảnh/file từ Clipboard`);
+      }
+    }
+
+    function handleDropMedia(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      document.getElementById('composerOuterBox')?.classList.remove('ring-2','ring-[#1967d2]/30');
+      if (e.dataTransfer?.files?.length) {
+        handleFilesSelected(e.dataTransfer.files);
+      }
+    }
+
+    function renderComposerAttachments() {
+      const row = document.getElementById('composerAttachmentsRow');
+      if (!row) return;
+      if (attachedMedia.length === 0) {
+        row.classList.add('hidden');
+        row.innerHTML = '';
         return;
       }
-      bar.classList.remove('hidden');
-      bar.classList.add('flex');
-      bar.innerHTML = pendingMedia.map((m, idx) => `
-        <div class="px-3 py-1 rounded-xl bg-slate-800 border border-slate-700 text-xs flex items-center gap-2">
-          <img src="icons/cat_plugin_puzzle.png" alt="" class="w-3.5 h-3.5 icon-3d" />
-          <span class="truncate max-w-[160px]">${escapeHtml(m.name)}</span>
-          <button onclick="pendingMedia.splice(${idx},1);renderPendingMedia()" class="text-rose-400 font-bold hover:text-rose-300">✕</button>
+      row.classList.remove('hidden');
+      row.innerHTML = attachedMedia.map((att, i) => {
+        const isImg = (att.mimeType || '').startsWith('image/');
+        return `
+          <div class="relative group shrink-0 rounded-xl overflow-hidden border border-[#d8d8d4] bg-[#f7f7f5]">
+            ${isImg ? `
+              <div class="w-14 h-14">
+                <img src="${att.dataUrl}" class="w-full h-full object-cover" alt="" />
+              </div>
+            ` : `
+              <div class="h-12 px-3 flex items-center gap-1.5 text-xs text-[#1f1f1f] max-w-[160px] truncate">
+                <span>📎</span>
+                <span class="truncate">${escapeHtml(att.name)}</span>
+              </div>
+            `}
+            <button
+              type="button"
+              onclick="removeAttachedMedia(${i})"
+              class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/75 text-white text-[10px] flex items-center justify-center cursor-pointer"
+            >✕</button>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function removeAttachedMedia(idx) {
+      attachedMedia.splice(idx, 1);
+      renderComposerAttachments();
+      updateComposerButtonState();
+    }
+
+    function toggleVoiceInput() {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) {
+        showToast('Trình duyệt này chưa hỗ trợ nhập giọng nói trực tiếp');
+        return;
+      }
+      const btn = document.getElementById('voiceMicBtn');
+      try {
+        const rec = new SR();
+        rec.lang = 'vi-VN';
+        btn.classList.add('text-[#d93025]', 'bg-[#fce8e6]');
+        rec.onresult = (ev) => {
+          const t = ev.results?.[0]?.[0]?.transcript || '';
+          if (t) {
+            const ta = document.getElementById('composerTextarea');
+            ta.value = ta.value ? `${ta.value} ${t}` : t;
+            handlePromptInput(ta);
+          }
+        };
+        rec.onend = () => btn.classList.remove('text-[#d93025]', 'bg-[#fce8e6]');
+        rec.onerror = () => btn.classList.remove('text-[#d93025]', 'bg-[#fce8e6]');
+        rec.start();
+      } catch (e) {
+        btn.classList.remove('text-[#d93025]', 'bg-[#fce8e6]');
+      }
+    }
+
+    // =========================================================================
+    // POPOVERS & DROPDOWNS (MODEL, TURBO, LOCAL, PROJECT, SLASH, MENTION)
+    // =========================================================================
+    function closeAllPopovers() {
+      ['modelMenuPopover', 'execModePopover', 'envModePopover', 'projectDropdownMenu', 'hostPopover', 'slashMenuPopover', 'mentionMenuPopover'].forEach(id => {
+        document.getElementById(id)?.classList.add('hidden');
+      });
+    }
+
+    document.addEventListener('click', () => closeAllPopovers());
+
+    function updateSelectedModelUi() {
+      document.getElementById('selectedModelNameLabel').textContent = selectedModel.name || selectedModel.label;
+      document.getElementById('selectedModelTierLabel').textContent = selectedModel.tier || '';
+    }
+
+    function renderModelMenuItems() {
+      const container = document.getElementById('modelMenuItems');
+      const models = overviewData.models || [];
+      container.innerHTML = models.map(m => {
+        const isSel = m.id === selectedModel.id;
+        const pct = Math.round((m.remainingFraction ?? 1) * 100);
+        return `
+          <button
+            type="button"
+            onclick="selectModelById('${escapeHtml(m.id)}')"
+            class="w-full px-3.5 py-2 flex items-center justify-between hover:bg-black/[0.04] text-left transition-colors cursor-pointer ${isSel ? 'bg-black/[0.03]' : ''}"
+          >
+            <div class="flex items-center gap-1.5 min-w-0">
+              <span class="text-[13px] text-[#1f1f1f] truncate">${escapeHtml(m.name || m.label)}</span>
+              ${m.tier ? `<span class="text-[12.5px] text-[#787878]">${escapeHtml(m.tier)}</span>` : ''}
+              ${m.tag ? `<span class="px-1.5 py-0.2 text-xs rounded bg-[#eef4ff] text-[#1967d2] font-medium">${escapeHtml(m.tag)}</span>` : ''}
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <span class="text-xs text-[#787878] tabular-nums">${pct}%</span>
+              ${isSel ? '<span class="text-[#1967d2] font-bold">✓</span>' : ''}
+            </div>
+          </button>
+        `;
+      }).join('');
+    }
+
+    function selectModelById(mid) {
+      const found = (overviewData.models || []).find(m => m.id === mid);
+      if (found) {
+        selectedModel = found;
+        updateSelectedModelUi();
+        renderModelMenuItems();
+      }
+      closeAllPopovers();
+    }
+
+    function toggleModelPopover(e) {
+      e.stopPropagation();
+      const el = document.getElementById('modelMenuPopover');
+      const wasHidden = el.classList.contains('hidden');
+      closeAllPopovers();
+      if (wasHidden) el.classList.remove('hidden');
+    }
+
+    function toggleExecModePopover(e) {
+      e.stopPropagation();
+      const el = document.getElementById('execModePopover');
+      const wasHidden = el.classList.contains('hidden');
+      closeAllPopovers();
+      if (wasHidden) el.classList.remove('hidden');
+    }
+
+    function selectExecMode(mode) {
+      execMode = mode;
+      document.getElementById('execModeLabel').textContent = mode;
+      closeAllPopovers();
+    }
+
+    function toggleEnvModePopover(e) {
+      e.stopPropagation();
+      const el = document.getElementById('envModePopover');
+      const wasHidden = el.classList.contains('hidden');
+      closeAllPopovers();
+      if (wasHidden) el.classList.remove('hidden');
+    }
+
+    function selectEnvMode(mode) {
+      envMode = mode;
+      document.getElementById('envModeLabel').textContent = mode;
+      closeAllPopovers();
+    }
+
+    function toggleProjectDropdown(e) {
+      e.stopPropagation();
+      const el = document.getElementById('projectDropdownMenu');
+      const wasHidden = el.classList.contains('hidden');
+      closeAllPopovers();
+      if (wasHidden) el.classList.remove('hidden');
+    }
+
+    function renderProjectDropdownItems() {
+      const projs = overviewData.projects || [];
+      const html = projs.map(p => `
+        <button
+          type="button"
+          onclick="selectProjectAndStartNew('${escapeHtml(p.id)}', '${escapeHtml(p.name)}')"
+          class="w-full px-3 py-2 flex items-center justify-between hover:bg-black/[0.04] text-left cursor-pointer"
+        >
+          <div class="flex items-center gap-2 truncate">
+            <svg class="w-3.5 h-3.5 text-[#787878] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+            <span class="text-[13px] text-[#1f1f1f] truncate">${escapeHtml(p.name)}</span>
+          </div>
+          <span class="text-xs text-[#787878] tabular-nums">${p.totalCount || 0}</span>
+        </button>
+      `).join('');
+      document.getElementById('projectDropdownItems').innerHTML = html;
+      document.getElementById('selectProjectModalList').innerHTML = html;
+    }
+
+    function toggleHostPopover(e) {
+      e.stopPropagation();
+      const el = document.getElementById('hostPopover');
+      const wasHidden = el.classList.contains('hidden');
+      closeAllPopovers();
+      if (wasHidden) el.classList.remove('hidden');
+    }
+
+    function renderHostInstancesPopover() {
+      const list = (overviewData.host && overviewData.host.instances) || [];
+      document.getElementById('hostInstancesList').innerHTML = list.map(inst => `
+        <div class="px-3 py-2 flex items-center justify-between hover:bg-black/[0.03]">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="w-2 h-2 rounded-full bg-[#2e7d32] shrink-0"></span>
+            <div class="truncate">
+              <div class="text-[12.5px] font-medium text-[#1f1f1f] truncate">${escapeHtml(inst.name)}</div>
+              <div class="text-xs text-[#787878] truncate">${escapeHtml(inst.label)}</div>
+            </div>
+          </div>
+          <span class="text-[#1967d2] text-xs font-bold">✓</span>
         </div>
       `).join('');
     }
 
-    async function sendPrompt() {
-      const input = document.getElementById('promptInput');
-      const text = input.value.trim();
-      if (!text && pendingMedia.length === 0) return;
+    function renderSlashMenu(filterVal) {
+      const q = (filterVal || '').toLowerCase();
+      const items = SLASH_COMMANDS.filter(s => s.cmd.startsWith(q));
+      document.getElementById('slashMenuItems').innerHTML = items.map(it => `
+        <button
+          type="button"
+          onclick="applySlashCmd('${it.cmd}')"
+          class="w-full px-3.5 py-2 flex items-center justify-between hover:bg-black/[0.04] text-left cursor-pointer"
+        >
+          <span class="text-[13px] font-mono text-[#1967d2] font-medium">${it.cmd}</span>
+          <span class="text-[12.5px] text-[#6e6e6e] truncate ml-3">${escapeHtml(it.desc)}</span>
+        </button>
+      `).join('');
+    }
 
-      const mediaToSend = [...pendingMedia];
-      pendingMedia = [];
-      renderPendingMedia();
-      input.value = '';
+    function applySlashCmd(cmd) {
+      const ta = document.getElementById('composerTextarea');
+      ta.value = cmd + ' ';
+      closeAllPopovers();
+      ta.focus();
+      updateComposerButtonState();
+    }
 
-      const projId = document.getElementById('projectSelect').value;
-      const model = document.getElementById('modelSelect').value;
-      document.getElementById('statusBadge').textContent = 'Đang gửi lệnh tới PC...';
+    function renderMentionMenu() {
+      const projs = overviewData.projects || [];
+      document.getElementById('mentionMenuItems').innerHTML = projs.map(p => `
+        <button
+          type="button"
+          onclick="applyMentionProject('${escapeHtml(p.id)}', '${escapeHtml(p.name)}')"
+          class="w-full px-3.5 py-2 flex items-center gap-2.5 hover:bg-black/[0.04] text-left cursor-pointer"
+        >
+          <span class="text-[13px] text-[#1f1f1f]">📁 ${escapeHtml(p.name)}</span>
+          <span class="text-[12px] text-[#8e8e8e] ml-auto">${p.totalCount || 0} convs</span>
+        </button>
+      `).join('');
+    }
 
-      if (!activeCid) {
-        const res = await apiFetch('/api/ag-companion/new', {
-          method: 'POST',
-          body: JSON.stringify({ prompt: text, projectId: projId, model, media: mediaToSend }),
-        });
-        if (res.conversationId) {
-          activeCid = res.conversationId;
-        }
-      } else {
-        await apiFetch('/api/ag-companion/send', {
-          method: 'POST',
-          body: JSON.stringify({ conversationId: activeCid, text, model, media: mediaToSend }),
-        });
+    function applyMentionProject(pid, pname) {
+      targetProjectId = pid;
+      targetProjectName = pname;
+      document.getElementById('selectedProjectLabel').textContent = pname;
+      const ta = document.getElementById('composerTextarea');
+      ta.value = ta.value.replace(/@\w*$/, `@${pname} `);
+      closeAllPopovers();
+      ta.focus();
+    }
+
+    // =========================================================================
+    // THU GỌN / MỞ RỘNG SIDEBAR (DESKTOP & MOBILE DRAWER)
+    // =========================================================================
+    function toggleSidebarCollapse() {
+      if (window.innerWidth < 768) {
+        toggleMobileSidebar(false);
+        return;
       }
-      await loadOverview();
+      sidebarCollapsedDesktop = !sidebarCollapsedDesktop;
+      const sb = document.getElementById('leftSidebar');
+      const btns = document.getElementById('collapsedSidebarBtns');
+      if (sidebarCollapsedDesktop) {
+        sb.classList.add('md:hidden');
+        btns.classList.remove('md:hidden');
+      } else {
+        sb.classList.remove('md:hidden');
+        btns.classList.add('md:hidden');
+      }
     }
 
-    function switchSecurityTab(tab) {
-      const isQr = tab === 'qr';
-      document.getElementById('secPaneQr').classList.toggle('hidden', !isQr);
-      document.getElementById('secPaneControls').classList.toggle('hidden', isQr);
-      document.getElementById('tabBtnQr').className = `py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition-all ${
-        isQr ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-      }`;
-      document.getElementById('tabBtnSec').className = `py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition-all ${
-        !isQr ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-      }`;
+    function expandSidebar() {
+      if (window.innerWidth < 768) {
+        toggleMobileSidebar(true);
+      } else {
+        sidebarCollapsedDesktop = false;
+        document.getElementById('leftSidebar').classList.remove('md:hidden');
+        document.getElementById('collapsedSidebarBtns').classList.add('md:hidden');
+      }
     }
 
-    async function openQrAndTunnel() {
-      toggleQrModal(true);
+    function toggleMobileSidebar(open) {
+      const sb = document.getElementById('leftSidebar');
+      const bd = document.getElementById('mobileSidebarBackdrop');
+      if (open) {
+        sb.classList.remove('-translate-x-full');
+        bd.classList.remove('hidden');
+      } else {
+        sb.classList.add('-translate-x-full');
+        bd.classList.add('hidden');
+      }
+    }
+
+    // =========================================================================
+    // MODALS: HISTORY, CUSTOMIZATIONS, SELECT PROJECT, SETTINGS & QR BẢO MẬT
+    // =========================================================================
+    function openHistoryModal() {
+      document.getElementById('historyModal').classList.remove('hidden');
+      document.getElementById('historyModalSearch').value = '';
+      renderHistoryModalList('');
+      document.getElementById('historyModalSearch').focus();
+    }
+
+    function closeHistoryModal() {
+      document.getElementById('historyModal').classList.add('hidden');
+    }
+
+    function renderHistoryModalList(q) {
+      const query = (q || '').toLowerCase().trim();
+      const all = (overviewData.projects || []).flatMap(p => p.conversations || []);
+      const filtered = query
+        ? all.filter(c => (c.title || '').toLowerCase().includes(query) || (c.projectName || '').toLowerCase().includes(query))
+        : all;
+      document.getElementById('historyModalList').innerHTML = filtered.slice(0, 120).map(conv => `
+        <button
+          type="button"
+          onclick="closeHistoryModal(); openConversation('${escapeHtml(conv.id)}', '${escapeHtml(conv.projectId)}', '${escapeHtml(conv.projectName)}')"
+          class="w-full px-3 py-2 rounded-lg hover:bg-black/[0.04] flex items-center justify-between text-left gap-3 cursor-pointer"
+        >
+          <div class="min-w-0">
+            <div class="text-[13.5px] font-medium text-[#1f1f1f] truncate">${escapeHtml(conv.title)}</div>
+            <div class="text-xs text-[#787878] flex items-center gap-1.5">
+              <span>📁 ${escapeHtml(conv.projectName)}</span>
+            </div>
+          </div>
+          <span class="text-[12px] text-[#787878] shrink-0 tabular-nums">${escapeHtml(conv.relativeTime || '')}</span>
+        </button>
+      `).join('');
+    }
+
+    async function openCustomizationsModal() {
+      document.getElementById('customizationsModal').classList.remove('hidden');
+      const body = document.getElementById('customizationsBody');
+      body.innerHTML = `<div class="py-8 text-center text-xs text-[#787878]">Loading workspace rules, skills &amp; MCP servers...</div>`;
+      try {
+        const data = await apiFetch('/api/ag-companion/customizations');
+        const rules = data.rules || [];
+        const skills = data.skills || [];
+        const mcps = data.mcpServers || [];
+        body.innerHTML = `
+          <div class="p-3 rounded-xl bg-[#f7f7f5] border border-[#e6e6e4] space-y-1.5">
+            <div class="font-semibold text-[#1f1f1f]">Workspace Rules (${rules.length})</div>
+            ${rules.map(r => `<div class="text-xs text-[#5f6368] font-mono">• ${escapeHtml(r.path)}</div>`).join('') || '<div class="text-xs text-[#787878]">Active</div>'}
+          </div>
+          <div class="p-3 rounded-xl bg-[#f7f7f5] border border-[#e6e6e4] space-y-1.5">
+            <div class="font-semibold text-[#1f1f1f]">MCP Servers (${mcps.length})</div>
+            <div class="flex flex-wrap gap-1.5">
+              ${mcps.map(m => `<span class="px-2 py-0.5 rounded-md bg-white border border-[#dfdfd8] text-xs font-mono text-[#188038]">● ${escapeHtml(m.name)} (${m.toolsCount} tools)</span>`).join('')}
+            </div>
+          </div>
+          <div class="p-3 rounded-xl bg-[#f7f7f5] border border-[#e6e6e4] space-y-1.5">
+            <div class="font-semibold text-[#1f1f1f]">Workspace Skills (${skills.length})</div>
+            <div class="space-y-1.5 max-h-56 overflow-y-auto thin-scroll pr-1">
+              ${skills.map(s => `
+                <div class="p-2 rounded-lg bg-white border border-[#e5e5e2]">
+                  <div class="text-xs font-mono font-semibold text-[#1967d2]">${escapeHtml(s.name)}</div>
+                  <div class="text-xs text-[#6e6e6e] line-clamp-2">${escapeHtml(s.description)}</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      } catch (e) {}
+    }
+
+    function closeCustomizationsModal() {
+      document.getElementById('customizationsModal').classList.add('hidden');
+    }
+
+    function openSelectProjectModal() {
+      renderProjectDropdownItems();
+      document.getElementById('selectProjectModal').classList.remove('hidden');
+    }
+
+    function closeSelectProjectModal() {
+      document.getElementById('selectProjectModal').classList.add('hidden');
+    }
+
+    async function openSettingsModal() {
+      document.getElementById('settingsModal').classList.remove('hidden');
       await refreshConnectionAndSecurityInfo();
+    }
+
+    function closeSettingsModal() {
+      document.getElementById('settingsModal').classList.add('hidden');
     }
 
     async function refreshConnectionAndSecurityInfo() {
-      const info = await apiFetch('/api/ag-companion/connection-info');
-      document.getElementById('currentPinBadge').textContent = info.pin || '------';
-      document.getElementById('activeViaBadge').textContent = info.clientVia ? `• Đang kết nối qua: ${info.clientVia}` : '';
-      document.getElementById('lanUrlText').value = info.lanUrl || '';
-      // Sử dụng trực tiếp QR SVG tạo cục bộ từ companion_server.py (Zero-Data-Leak)
-      document.getElementById('lanQrImg').src = info.lanQrSvgDataUrl || ('/api/ag-companion/qr?text=' + encodeURIComponent(info.lanUrl || ''));
-      updateTunnelUi(info.tunnelRunning, info.tunnelUrl, info.tunnelQrSvgDataUrl);
+      try {
+        const info = await apiFetch('/api/ag-companion/connection-info');
+        currentConnectionInfo = info;
+        document.getElementById('currentPinBadge').textContent = info.pin || '••••••';
+        document.getElementById('lanUrlText').textContent = info.lanUrl || '';
+        if (info.lanQrSvgDataUrl) {
+          document.getElementById('qrLanImg').src = info.lanQrSvgDataUrl;
+        }
+        document.getElementById('securityStatusSub').textContent =
+          `Kết nối qua ${info.clientVia || 'Local'} (${info.clientIp || '127.0.0.1'}) · ${info.wsClientsCount || 1} kết nối WebSocket Realtime`;
 
-      currentAllowLan = Boolean(info.allowLan);
-      const lanBtn = document.getElementById('btnToggleLanPolicy');
-      if (currentAllowLan) {
-        lanBtn.textContent = 'Đang Cho Phép LAN';
-        lanBtn.className = 'px-3 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold';
-      } else {
-        lanBtn.textContent = 'Đang Khóa LAN (Chỉ Local/Tunnel)';
-        lanBtn.className = 'px-3 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold';
-      }
+        const btnLan = document.getElementById('btnToggleLanPolicy');
+        const descLan = document.getElementById('lanPolicyDesc');
+        if (info.allowLan) {
+          btnLan.textContent = 'Đang Bật LAN';
+          btnLan.className = 'px-3 py-1.5 rounded-lg bg-[#e6f4ea] text-[#137333] text-xs font-bold shrink-0 cursor-pointer';
+          descLan.textContent = 'Cho phép điện thoại cùng mạng Wi-Fi kết nối';
+        } else {
+          btnLan.textContent = 'Đã Khóa LAN';
+          btnLan.className = 'px-3 py-1.5 rounded-lg bg-[#fce8e6] text-[#c5221f] text-xs font-bold shrink-0 cursor-pointer';
+          descLan.textContent = 'Chỉ cho phép PC Localhost & Cloudflare Tunnel';
+        }
 
-      const sessions = info.activeSessions || [];
-      document.getElementById('sessionsCountLabel').textContent = String(sessions.length);
-      document.getElementById('activeSessionsBox').innerHTML = sessions.map(s => `
-        <div class="p-2 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-between gap-2">
-          <div class="truncate">
-            <span class="font-bold text-emerald-300">${escapeHtml(s.via || 'Device')}</span>
-            <span class="text-slate-400 ml-1 tabular-nums">(${escapeHtml(s.ip || '')})</span>
+        updateTunnelSectionUi(info.tunnelRunning, info.tunnelUrl, info.tunnelQrSvgDataUrl);
+
+        const sessList = info.activeSessions || [];
+        document.getElementById('activeSessionsCount').textContent = String(sessList.length);
+        document.getElementById('activeSessionsList').innerHTML = sessList.map(s => `
+          <div class="px-2.5 py-1.5 rounded-lg bg-white border border-[#e5e5e2] flex items-center justify-between">
+            <span class="font-medium text-[#1f1f1f]">${escapeHtml(s.ip)} · ${escapeHtml(s.via)}</span>
+            <span class="text-[#188038] font-mono">${escapeHtml(s.tokenId)}</span>
           </div>
-          <span class="text-slate-500 truncate max-w-[180px]">${escapeHtml(s.ua || '')}</span>
-        </div>
-      `).join('') || '<div class="text-slate-500">Chưa có phiên nào.</div>';
+        `).join('');
 
-      const logs = info.auditLog || [];
-      document.getElementById('auditLogBox').innerHTML = logs.map(l => {
-        const badgeColor = l.level === 'danger' ? 'text-rose-400' : (l.level === 'warn' ? 'text-amber-300' : 'text-cyan-300');
-        return `
-          <div class="p-2 rounded-lg bg-slate-900 border border-slate-800 flex items-start justify-between gap-2">
-            <div class="min-w-0">
-              <span class="font-bold ${badgeColor}">[${escapeHtml(l.event)}]</span>
-              <span class="text-slate-300 ml-1">${escapeHtml(l.detail)}</span>
+        const audits = info.auditLog || [];
+        document.getElementById('securityAuditList').innerHTML = audits.slice(0, 12).map(a => `
+          <div class="px-2.5 py-1 rounded-lg bg-white border border-[#e5e5e2]">
+            <div class="flex justify-between font-semibold">
+              <span>${escapeHtml(a.event)}</span>
+              <span class="text-[#787878] tabular-nums">${escapeHtml(a.timeStr)}</span>
             </div>
-            <span class="text-slate-500 shrink-0 tabular-nums">${escapeHtml(l.timeStr || '')}</span>
+            <div class="text-[#5f6368] truncate">${escapeHtml(a.detail)}</div>
           </div>
-        `;
-      }).join('') || '<div class="text-slate-500">Chưa có sự kiện nào.</div>';
+        `).join('');
+      } catch (e) {}
     }
 
-    function updateTunnelUi(running, tunnelUrl, qrDataUrl) {
-      const act = document.getElementById('tunnelActiveBox');
-      const inact = document.getElementById('tunnelInactiveBox');
-      if (running && tunnelUrl) {
-        act.classList.remove('hidden');
-        act.classList.add('flex');
-        inact.classList.add('hidden');
-        document.getElementById('tunnelUrlText').value = tunnelUrl;
-        document.getElementById('tunnelQrImg').src = qrDataUrl || ('/api/ag-companion/qr?text=' + encodeURIComponent(tunnelUrl));
+    function updateTunnelSectionUi(running, url, qrSvgUrl) {
+      const qrImg = document.getElementById('qrTunnelImg');
+      const ph = document.getElementById('tunnelPlaceholderText');
+      const urlTxt = document.getElementById('tunnelUrlText');
+      const btnToggle = document.getElementById('btnToggleTunnel');
+      const btnCopy = document.getElementById('btnCopyTunnel');
+
+      if (running && url) {
+        qrImg.src = qrSvgUrl || (`/api/ag-companion/qr?text=${encodeURIComponent(url)}`);
+        qrImg.classList.remove('hidden');
+        ph.classList.add('hidden');
+        urlTxt.textContent = url;
+        btnToggle.textContent = 'Tắt 4G/5G Tunnel';
+        btnToggle.className = 'flex-1 py-1.5 rounded-lg bg-[#fce8e6] text-[#c5221f] text-xs font-semibold cursor-pointer';
+        btnCopy.classList.remove('hidden');
       } else {
-        act.classList.add('hidden');
-        act.classList.remove('flex');
-        inact.classList.remove('hidden');
+        qrImg.classList.add('hidden');
+        ph.classList.remove('hidden');
+        urlTxt.textContent = '';
+        btnToggle.textContent = 'Bật 4G/5G Tunnel';
+        btnToggle.className = 'flex-1 py-1.5 rounded-lg bg-[#1967d2] hover:bg-[#1557b0] text-white text-xs font-semibold cursor-pointer';
+        btnCopy.classList.add('hidden');
       }
     }
 
-    async function setTunnel(enable) {
-      const btn = document.getElementById('btnEnableTunnel');
-      if (btn) btn.innerHTML = '<span>Đang khởi tạo đường hầm Cloudflare (5-10s)...</span>';
-      const res = await apiFetch('/api/ag-companion/tunnel-toggle', {
-        method: 'POST',
-        body: JSON.stringify({ enable }),
-      });
-      if (btn) {
-        btn.innerHTML = '<img src="icons/sb_globe_system.png" alt="" class="w-4 h-4 icon-3d" /><span>Bật Đường Hầm 4G/5G Ngay</span>';
-      }
-      updateTunnelUi(res.running, res.tunnelUrl, res.tunnelQrSvgDataUrl);
-      await refreshConnectionAndSecurityInfo();
-    }
-
-    async function rotatePinNow(customPin) {
-      const res = await apiFetch('/api/ag-companion/rotate-pin', {
-        method: 'POST',
-        body: JSON.stringify({ newPin: (customPin || '').trim() }),
-      });
-      if (res.ok && res.pin) {
-        pinCode = res.pin;
-        sessionToken = res.sessionToken || sessionToken;
-        localStorage.setItem('ag_selfhost_pin', pinCode);
-        if (sessionToken) localStorage.setItem('ag_selfhost_session', sessionToken);
-        document.getElementById('customPinInput').value = '';
-        showToast('Đã đổi mã PIN mới (' + res.pin + ') & thu hồi mọi phiên cũ!');
+    async function toggleCloudflareTunnel() {
+      const enable = !(currentConnectionInfo && currentConnectionInfo.tunnelRunning);
+      const btn = document.getElementById('btnToggleTunnel');
+      btn.textContent = enable ? 'Đang tạo đường hầm 4G/5G...' : 'Đang ngắt...';
+      try {
+        const res = await apiFetch('/api/ag-companion/tunnel-toggle', {
+          method: 'POST',
+          body: JSON.stringify({ enable })
+        });
         await refreshConnectionAndSecurityInfo();
-      } else if (res.error) {
-        showToast(res.error);
-      }
+        showToast(res.running ? 'Đã bật đường hầm 4G/5G Cloudflare!' : 'Đã tắt đường hầm 4G/5G');
+      } catch (e) {}
+    }
+
+    async function rotatePinNow() {
+      try {
+        const res = await apiFetch('/api/ag-companion/rotate-pin', { method: 'POST', body: JSON.stringify({}) });
+        if (res && res.ok) {
+          sessionToken = res.sessionToken || sessionToken;
+          localStorage.setItem('ag_companion_session_token', sessionToken);
+          await refreshConnectionAndSecurityInfo();
+          connectRealtimeWebSocket();
+          showToast(`Đã đổi mã PIN mới: ${res.pin}`);
+        }
+      } catch (e) {}
     }
 
     async function toggleLanPolicy() {
-      const nextVal = !currentAllowLan;
-      const res = await apiFetch('/api/ag-companion/security-policy', {
-        method: 'POST',
-        body: JSON.stringify({ allowLan: nextVal }),
-      });
-      if (res.ok) {
-        showToast(nextVal ? 'Đã mở kết nối qua mạng Wi-Fi LAN' : 'Đã khóa Wi-Fi LAN (Chỉ cho phép Localhost + Tunnel)');
-        await refreshConnectionAndSecurityInfo();
+      const nextLan = !(currentConnectionInfo && currentConnectionInfo.allowLan);
+      try {
+        const res = await apiFetch('/api/ag-companion/security-policy', {
+          method: 'POST',
+          body: JSON.stringify({ allowLan: nextLan })
+        });
+        if (res && res.ok) {
+          await refreshConnectionAndSecurityInfo();
+          showToast(res.allowLan ? 'Đã mở kết nối Wi-Fi LAN' : 'Đã khóa kết nối Wi-Fi LAN');
+        }
+      } catch (e) {}
+    }
+
+    function copyLinkText(elId) {
+      const txt = document.getElementById(elId)?.textContent || '';
+      if (txt) {
+        navigator.clipboard?.writeText(txt);
+        showToast('Đã sao chép đường dẫn kết nối!');
       }
     }
 
-    function logoutThisDevice() {
-      localStorage.removeItem('ag_selfhost_session');
-      localStorage.removeItem('ag_selfhost_pin');
-      sessionToken = '';
-      pinCode = '';
-      toggleQrModal(false);
-      document.getElementById('pinModal').classList.remove('hidden');
-      document.getElementById('pinModal').classList.add('flex');
-    }
+    // =========================================================================
+    // KHỞI ĐỘNG ỨNG DỤNG
+    // =========================================================================
+    (async function bootApp() {
+      // Gắn Composer vào màn hình New Conversation ban đầu
+      mountComposerTo('emptyComposerMount');
 
-    function toggleQrModal(show) {
-      const m = document.getElementById('qrModal');
-      if (show) {
-        m.classList.remove('hidden');
-        m.classList.add('flex');
-      } else {
-        m.classList.add('hidden');
-        m.classList.remove('flex');
+      // Nếu có mã PIN từ URL vừa lưu, tự động đổi sang Session Token 256-bit
+      if (savedPin && !sessionToken) {
+        try {
+          const r = await fetch('/api/ag-companion/auth-session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pin: savedPin })
+          });
+          const d = await r.json();
+          if (r.ok && d.ok && d.sessionToken) {
+            sessionToken = d.sessionToken;
+            savedPin = '';
+            localStorage.setItem('ag_companion_session_token', sessionToken);
+            localStorage.removeItem('ag_companion_pin');
+          }
+        } catch (e) {}
       }
-    }
 
-    function copyInput(id, toastMsg) {
-      const el = document.getElementById(id);
-      navigator.clipboard.writeText(el.value || '');
-      if (toastMsg) showToast(toastMsg);
-    }
+      await refreshOverview();
+      connectRealtimeWebSocket();
 
-    function escapeHtml(s) {
-      return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }
-
-    document.addEventListener('paste', ev => {
-      const items = Array.from((ev.clipboardData || {}).items || []);
-      items.forEach(item => {
-        if (item.type.startsWith('image/')) {
-          const f = item.getAsFile();
-          if (f) {
-            const reader = new FileReader();
-            reader.onload = () => {
-              pendingMedia.push({ name: f.name || 'clipboard.png', mimeType: f.type, dataUrl: reader.result });
-              renderPendingMedia();
-            };
-            reader.readAsDataURL(f);
+      // Fallback đồng bộ nhẹ mỗi 4 giây nếu mạng di động làm rớt WebSocket tạm thời
+      setInterval(() => {
+        if (!wsConnected) {
+          refreshOverview();
+          if (activeConversationId && !activeConversationId.startsWith('pending_')) {
+            apiFetch(`/api/ag-companion/conversation/${encodeURIComponent(activeConversationId)}?markRead=0`)
+              .then(d => { activeConversation = d; renderActiveConversation(); })
+              .catch(() => {});
           }
         }
-      });
-    });
-
-    (async () => {
-      await exchangePinForSessionIfNeeded();
-      await loadOverview().catch(() => {});
-      setInterval(() => { loadOverview().catch(() => {}); }, 3000);
+      }, 4000);
     })();
   </script>
 </body>

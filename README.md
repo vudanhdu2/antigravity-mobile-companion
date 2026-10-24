@@ -1,27 +1,24 @@
-# 🛡️ Antigravity Mobile Companion v2.0 — Tự Host (Self-Host) Bảo Mật 100% Dữ Liệu
+# 🛡️ Antigravity Mobile Companion v2.1 — Giao Diện Chuẩn Google Antigravity + Đồng Bộ WebSocket Realtime + Tự Host Bảo Mật 100%
 
-> **Điều khiển trực tiếp ứng dụng Antigravity Desktop đang mở trên máy PC của bạn từ Điện thoại / Máy tính bảng qua Wi-Fi LAN, Tailscale VPN hoặc 4G/5G (Cloudflare Quick Tunnel miễn phí) — 100% dữ liệu, mã nguồn và mã QR nằm trọn trên máy tính của bạn (Zero-Data-Leak).**
+> **Điều khiển trực tiếp ứng dụng Antigravity Desktop đang mở trên máy PC của bạn từ Điện thoại / Máy tính bảng / Laptop qua Wi-Fi LAN, Tailscale VPN hoặc 4G/5G (Cloudflare Quick Tunnel miễn phí) — giao diện giống hệt Google Antigravity, đồng bộ WebSocket Realtime (`<0.5s`) và 100% dữ liệu nằm trọn trên máy tính của bạn (Zero-Data-Leak).**
 
 ---
 
-## 🌟 Vì sao toàn bộ thành viên chuyển sang bản Tự Host (Self-Host) này?
+## 🌟 Điểm nổi bật trên phiên bản v2.1
 
-Để đảm bảo an toàn thông tin tuyệt đối cho mã nguồn dự án và dữ liệu hội thoại của từng thành viên, tính năng **Giao việc Antigravity (Mục 5)** trên cổng chung đã được tắt và chuyển hoàn toàn sang mô hình **Tự Host Chủ Động (Self-Host)** trên máy tính cá nhân của bạn:
-
-1. **🔒 Bảo mật tuyệt đối (Zero-Data-Leak)**:
+1. **🖥️ Giao Diện Giống Hệt Google Antigravity Desktop (Trải Nghiệm Liền Mạch 100%)**:
+   - **Sidebar Chuẩn Antigravity (`#f3f3f2`)**: Thanh tiêu đề `Antigravity` kèm nút đóng/mở sidebar & tìm kiếm nhanh, nút `+ New Conversation`, hộp thoại `Conversation History`, hộp thoại `Customizations` (đọc trực tiếp Rules, Skills `SKILL.md` và MCP Servers trên máy), danh sách `Pinned Conversations`, cây thư mục `Projects` (`📁 AG`, `📁 CLI Project`...) đọc trực tiếp từ `~/.gemini/config/projects/`, trạng thái đang chạy (vòng xoay), chấm xanh chưa đọc và thẻ chọn máy trạm ở đáy sidebar.
+   - **Khung Soạn Thảo 2 Tầng Chuẩn Antigravity (`#f9f9f8`)**:
+     - Trạng thái `+ New Conversation`: Pill chọn dự án `📁 AG ⌄` chính giữa màn hình + khung nhập liệu 2 tầng (`Ask anything, @ to mention, / for actions`), nút `+` đính kèm hình ảnh/tài liệu, chọn Model AI (`Gemini 4 Argon High`, `Gemini 4 Argon Low`, `Gemini 3.8 Flash`, `Claude Opus 4.6`, `Claude Sonnet 4.6`), chế độ thực thi (`🛡️ Turbo ⌄` / `Auto` / `Ask`), nhập giọng nói `🎤`, nút gửi `→` / dừng `⏹`, và thanh trạng thái `💻 Local ⌄` ở tầng dưới.
+     - Trạng thái Hội Thoại Đang Mở: Hiển thị luồng suy nghĩ (`Thought for Xs`), các khối công cụ (`>_ CMD` / `FILE` bấm mở rộng xem console output), khối code có nút `Copy`, tiến độ `Kế hoạch:` / `Tiến độ:` và tự động cuộn mượt khi AI trả lời.
+2. **⚡ Đồng Bộ Realtime Hai Chiều Qua WebSocket (`/ws` — RFC 6455)**:
+   - Tích hợp máy chủ **WebSocket RFC 6455 thuần Python** (không cần cài thêm thư viện ngoài) tại đường dẫn `/ws` và `/api/ag-companion/ws`.
+   - Mọi thay đổi trên cửa sổ Antigravity Desktop hoặc từ điện thoại (tạo hội thoại mới, gửi tin nhắn, AI đang suy nghĩ/chạy lệnh, ghim hội thoại, dừng tác vụ) đều được đẩy tức thì qua WebSocket (`<0.55s`) tới mọi thiết bị đang mở mà không cần tải lại trang.
+3. **🔒 Bảo Mật Chủ Động 100% (Zero-Data-Leak)**:
    - Toàn bộ lịch sử hội thoại (`transcript.jsonl`, `conversation_summaries.db`, `<cid>.db`), mã nguồn dự án và hình ảnh/tài liệu đính kèm **chỉ nằm trên ổ cứng máy PC của bạn** (`~/.gemini/antigravity`).
-   - Không đồng bộ nội dung cuộc trò chuyện hay mã nguồn lên bất kỳ máy chủ trung gian nào.
-2. **🛡️ Tạo Mã QR SVG 100% Offline & Tự Ẩn Mã PIN**:
-   - Mã QR kết nối Wi-Fi LAN và 4G/5G Cloudflare Tunnel được tạo trực tiếp bằng thuật toán ISO/IEC 18004 ngay trong Python trên máy PC của bạn (**tuyệt đối không gửi URL hay mã PIN ra dịch vụ bên thứ ba như `api.qrserver.com`**).
-   - Ngay khi điện thoại quét mã QR, trình duyệt tự động đổi mã PIN sang **Session Token 256-bit (`ags_...`)** và xóa ngay `?pin=XXXXXX` khỏi thanh địa chỉ trình duyệt để chống lộ PIN trong lịch sử duyệt web.
-3. **🚨 Chống Dò Mật Khẩu (Anti-Brute-Force) & Tường Lửa LAN Chủ Động**:
-   - So sánh mã PIN hằng thời gian (`hmac.compare_digest`) và **tự động khóa IP trong 5 phút** nếu nhập sai mã PIN quá 5 lần liên tiếp.
-   - **Nút Đổi Mã PIN 1-Chạm & Thu Hồi Phiên Cũ**: Đổi mã PIN mới bất cứ lúc nào để đăng xuất ngay lập tức mọi thiết bị cũ.
-   - **Chế độ Khóa Mạng LAN (Dành cho Wi-Fi công cộng / Quán Cafe)**: Cho phép tắt kết nối LAN chỉ với 1 nút bấm để chỉ chính máy PC hoặc đường hầm 4G/5G có mã PIN mới truy cập được.
-   - **Sandbox đường dẫn Media nghiêm ngặt**: Chặn tuyệt đối mọi hành vi đọc file ngoài thư mục `brain/` và `uploads/` (chống Path Traversal 100%).
-4. **⚡ Điều khiển thật 100% cửa sổ Antigravity Desktop trên PC (Connect RPC `<30ms`)**:
-   - Kết nối trực tiếp vào tiến trình `language_server` của Antigravity Desktop đang mở trên máy tính của bạn qua giao thức loopback `127.0.0.1` (`StartCascade`, `SendUserCascadeMessage`, `SaveMediaAsArtifact`, `CancelCascadeInvocation`).
-   - Giao việc mới, nhắn tiếp vào phiên đang mở, chọn Model AI (`Gemini 4 Argon`, `Gemini 3.8 Flash`, `Claude Opus 4.6`, `Claude Sonnet 4.6`), đính kèm hình ảnh/tài liệu, dừng tác vụ đang chạy, xem trực tiếp tiến độ (`Kế hoạch:` / `Tiến độ:`), luồng suy nghĩ (`Thinking`) và công cụ (`Tool Calls`) theo thời gian thực.
+   - **Tạo Mã QR SVG 100% Offline**: Thuật toán ISO/IEC 18004 chạy trực tiếp trong Python trên PC (**tuyệt đối không gửi URL hay mã PIN ra dịch vụ bên thứ ba như `api.qrserver.com`**).
+   - **Tự Ẩn Mã PIN & Cấp Session Token 256-bit (`ags_...`)**: Ngay khi quét mã QR, trình duyệt tự động đổi mã PIN lấy Session Token và xóa `?pin=XXXXXX` khỏi thanh địa chỉ.
+   - **Chống Brute-Force & Tường Lửa LAN Chủ Động**: Khóa IP 5 phút nếu nhập sai mã PIN quá 5 lần liên tiếp (`HTTP 429`), nút **Đổi Mã PIN 1-Chạm** thu hồi ngay mọi phiên cũ, chế độ **Khóa Mạng LAN** khi ngồi Wi-Fi công cộng, và **Sandbox đường dẫn Media** chống Path Traversal 100% (`HTTP 403`).
 
 ---
 
@@ -58,38 +55,22 @@ python companion_server.py --tunnel --localhost-only
 
 ---
 
-## 🧪 Tự Kiểm Thử Bảo Mật & Chức Năng (Self-Audit Test Suite)
+## 🧪 Tự Kiểm Thử Bảo Mật, Giao Diện & WebSocket Realtime (10/10 Tests)
 
-Repo đi kèm bộ kiểm thử tự động `test_companion_security.py` giúp bạn tự kiểm chứng 8 lớp bảo mật và kết nối ngay trên máy tính:
+Repo đi kèm bộ kiểm thử tự động `test_companion_security.py` giúp bạn tự kiểm chứng 10 hạng mục bảo mật, giao diện chuẩn Antigravity và đồng bộ WebSocket ngay trên máy tính:
 
 ```bash
 python test_companion_security.py
 ```
 
-Bộ kiểm thử sẽ xác minh:
-1. Tạo mã QR SVG Offline (0 rò rỉ dữ liệu ra ngoài).
-2. Chặn truy cập trái phép khi không có mã PIN (`HTTP 401`).
-3. Cấp phát Session Token (`ags_...`) khi xác thực đúng mã PIN.
-4. Chống Path Traversal trên `/api/ag-companion/media` (`HTTP 403` với file hệ thống / `.env` / `.py`).
-5. Đổi mã PIN mới (`Rotate PIN`) và thu hồi toàn bộ phiên cũ.
-6. Chính sách khóa/mở mạng Wi-Fi LAN (`allowLan`) & Nhật ký Bảo mật (`Security Audit Log`).
-7. Chống Brute-Force: tự động khóa IP (`HTTP 429`) sau 5 lần nhập sai mã PIN liên tiếp.
-8. Kết nối thực tế với ứng dụng Antigravity Desktop & đọc danh sách dự án/hội thoại local.
-
----
-
-## 📂 Cấu trúc thư mục
-
-```text
-antigravity-mobile-companion/
-├── companion_server.py               # Server Python độc lập (Connect RPC + QR Offline + Anti-Brute-Force + Sandbox)
-├── test_companion_security.py        # Bộ kiểm thử tự động 8 lớp bảo mật & chức năng
-├── start-companion.bat               # Chạy 1-Click trên Windows
-├── install-and-run.ps1               # Script tự động tải & khởi chạy bằng 1 dòng lệnh PowerShell
-├── web/
-│   ├── index.html                    # Giao diện Mobile & Desktop (chuẩn font Google Sans + Trung tâm Bảo mật)
-│   ├── icons/                        # Bộ Icon 3D Game/App Art sắc nét
-│   └── fonts/                        # Bộ font Google Sans & Google Sans Code offline (tiếng Việt tròn nét)
-└── src/
-    └── RemoteAntigravityAgent.tsx    # Mã nguồn React/TypeScript đầy đủ để nhà phát triển tự tùy biến
-```
+Bộ kiểm thử xác minh tự động 10/10 tiêu chí:
+1. Khởi chạy Companion Server & phục vụ giao diện Web tĩnh.
+2. Giao diện chuẩn Google Antigravity (`Sidebar #f3f3f2`, `Pinned Conversations`, `Conversation History`, `Customizations`, khung nhập 2 tầng `Ask anything, @ to mention, / for actions`, bộ font `Google Sans` offline, Zero external QR leak).
+3. Chặn truy cập trái phép khi không có mã PIN (`HTTP 401`).
+4. Xác thực mã PIN & cấp phát Session Token 256-bit (`ags_...`).
+5. Tạo mã QR SVG Offline & đọc danh sách Projects chuẩn từ `~/.gemini/config/projects/`.
+6. Đọc dữ liệu thật `Customizations` (`Rules`, `Skills`, `MCP Servers`) trên máy PC.
+7. Đồng bộ Realtime WebSocket (`/ws` — RFC 6455): bắt tay `101 Switching Protocols`, nhận tức thì gói `overview` và phản hồi `ping` ↔ `pong` hai chiều.
+8. Chống Path Traversal trên `/api/ag-companion/media` (`HTTP 403` với file hệ thống / `.env` / `.py`).
+9. Đổi mã PIN mới (`Rotate PIN`) và thu hồi toàn bộ phiên cũ.
+10. Chống Brute-Force: tự động khóa IP (`HTTP 429`) sau 5 lần nhập sai mã PIN liên tiếp.

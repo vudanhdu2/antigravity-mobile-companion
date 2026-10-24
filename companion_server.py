@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Antigravity Mobile Companion — Self-Hosted Local Bridge (100% Data Privacy)
-===========================================================================
+Antigravity Mobile Companion — Self-Hosted Local Bridge (100% Data Privacy + WebSocket Realtime)
+================================================================================================
 Điều khiển trực tiếp ứng dụng Antigravity Desktop đang mở trên máy PC của bạn
-từ Điện thoại / Máy tính bảng qua mạng Wi-Fi LAN, Tailscale VPN hoặc 4G/5G
-(Cloudflare Quick Tunnel miễn phí) kèm khóa bảo mật mã PIN 6 số & Phiên Token.
+từ Điện thoại / Máy tính bảng / Web qua mạng Wi-Fi LAN, Tailscale VPN hoặc 4G/5G
+(Cloudflare Quick Tunnel miễn phí) với giao diện chuẩn Google Antigravity
+và đồng bộ Realtime qua WebSocket (/ws).
 
 Cam kết Bảo mật Chủ động (Zero-Data-Leak):
 - 100% dữ liệu hội thoại (transcript.jsonl, summaries.db, <cid>.db), mã nguồn
@@ -35,6 +36,7 @@ import socket
 import socketserver
 import sqlite3
 import ssl
+import struct
 import subprocess
 import sys
 import threading
@@ -53,6 +55,7 @@ try:
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
+
 HOME = Path.home()
 ANTIGRAVITY_DIR = HOME / ".gemini" / "antigravity"
 SUMMARIES_DB = ANTIGRAVITY_DIR / "conversation_summaries.db"
@@ -67,10 +70,11 @@ CONFIG_FILE = COMPANION_DATA_DIR / "config.json"
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 DEFAULT_PORT = int(os.environ.get("AG_COMPANION_PORT", "8046"))
-HOST_NAME = socket.gethostname() or "my-antigravity-pc"
+HOST_NAME = os.environ.get("AG_COMPANION_HOSTNAME") or "vudanhdu-cosmic-spark"
 SERVICE = "/exa.language_server_pb.LanguageServerService/"
 ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 AG_SETTLED = (3, 4, 5, 6, 7, 12)
+WS_MAGIC = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 BLOCKED_MEDIA_EXTENSIONS = {
     ".env", ".db", ".sqlite", ".sqlite3", ".wal", ".shm", ".json", ".jsonl",
@@ -85,9 +89,13 @@ _SSL_CTX.verify_mode = ssl.CERT_NONE
 DEFAULT_MODELS = [
     {"id": "MODEL_PLACEHOLDER_M417", "label": "Gemini 4 Argon (High)", "name": "Gemini 4 Argon", "tier": "High", "tag": "New", "cliModel": "pro", "remainingFraction": 1.0},
     {"id": "MODEL_PLACEHOLDER_M418", "label": "Gemini 4 Argon (Medium)", "name": "Gemini 4 Argon", "tier": "Medium", "tag": "New", "cliModel": "pro", "remainingFraction": 1.0},
+    {"id": "MODEL_PLACEHOLDER_M419", "label": "Gemini 4 Argon (Low)", "name": "Gemini 4 Argon", "tier": "Low", "tag": "New", "cliModel": "flash", "remainingFraction": 1.0},
     {"id": "MODEL_PLACEHOLDER_M318", "label": "Gemini 3.8 Flash (High)", "name": "Gemini 3.8 Flash", "tier": "High", "tag": "Fast", "cliModel": "flash", "remainingFraction": 1.0},
+    {"id": "MODEL_PLACEHOLDER_M319", "label": "Gemini 3.8 Flash (Medium)", "name": "Gemini 3.8 Flash", "tier": "Medium", "tag": "Fast", "cliModel": "flash", "remainingFraction": 1.0},
+    {"id": "MODEL_PLACEHOLDER_M320", "label": "Gemini 3.8 Flash (Low)", "name": "Gemini 3.8 Flash", "tier": "Low", "tag": "Fast", "cliModel": "flash_lite", "remainingFraction": 1.0},
     {"id": "MODEL_PLACEHOLDER_M26", "label": "Claude Opus 4.6 (Thinking)", "name": "Claude Opus 4.6", "tier": "Thinking", "tag": "Opus", "cliModel": "pro", "remainingFraction": 1.0},
     {"id": "MODEL_PLACEHOLDER_M35", "label": "Claude Sonnet 4.6 (Thinking)", "name": "Claude Sonnet 4.6", "tier": "Thinking", "tag": "Sonnet", "cliModel": "pro", "remainingFraction": 1.0},
+    {"id": "MODEL_OPENAI_GPT_OSS_120B_MEDIUM", "label": "GPT-OSS 120B (Medium)", "name": "GPT-OSS 120B", "tier": "Medium", "tag": "", "cliModel": "pro", "remainingFraction": 1.0},
 ]
 
 _state_lock = threading.RLock()
@@ -107,7 +115,18 @@ _locked_ips: dict[str, float] = {}             # ip -> unlock_epoch
 _active_sessions: dict[str, dict] = {}         # token -> {ip, ua, createdAt, lastSeen, via}
 _security_audit_log: list[dict] = []           # [{ts, event, ip, detail, level}]
 _optimistic_convs: dict[str, dict] = {}
+_viewed_overrides: dict[str, float] = {}
+_pinned_overrides: dict[str, bool] = {}
 _user_cfg_cache: dict = {"at": 0.0, "cfg": None}
+_projects_cfg_cache: dict = {"at": 0.0, "data": {}}
+_annotations_cache: dict = {"at": 0.0, "data": {}}
+_live_rpc_cache: dict = {"at": 0.0, "summaries": {}, "models": list(DEFAULT_MODELS), "email": "", "tier": ""}
+
+# Quản lý kết nối WebSocket Realtime (RFC 6455)
+_ws_lock = threading.Lock()
+_ws_clients: list[dict] = []  # [{"sock": sock, "lock": Lock(), "cid": None, "ip": ip}]
+_last_ov_fingerprint: list[str] = [""]
+_last_conv_fingerprints: dict[str, str] = {}
 
 MAX_FAILED_ATTEMPTS = 5
 FAILED_WINDOW_SEC = 300.0
@@ -130,7 +149,172 @@ def append_security_audit(event: str, ip: str, detail: str, level: str = "info")
 
 
 # ============================================================================
-# 1. BỘ TẠO MÃ QR SVG 100% OFFLINE (ZERO-DATA-LEAK, KHÔNG GỌI SERVER NGOÀI)
+# 1. WEBSOCKET REALTIME ENGINE (RFC 6455)
+# ============================================================================
+
+def ws_send_frame(client: dict, payload_str: str, opcode: int = 0x1) -> bool:
+    """Gửi frame WebSocket RFC-6455 từ server xuống trình duyệt/điện thoại."""
+    data = payload_str.encode("utf-8")
+    length = len(data)
+    header = bytearray([0x80 | (opcode & 0x0F)])
+    if length < 126:
+        header.append(length)
+    elif length < 65536:
+        header.append(126)
+        header.extend(struct.pack("!H", length))
+    else:
+        header.append(127)
+        header.extend(struct.pack("!Q", length))
+    try:
+        with client["lock"]:
+            client["sock"].sendall(bytes(header) + data)
+        return True
+    except Exception:
+        return False
+
+
+def ws_read_frame(sock: socket.socket) -> tuple[int | None, bytes]:
+    """Đọc 1 frame WebSocket RFC-6455 từ client gửi lên."""
+    try:
+        b12 = sock.recv(2)
+        if len(b12) < 2:
+            return None, b""
+        opcode = b12[0] & 0x0F
+        masked = (b12[1] & 0x80) != 0
+        length = b12[1] & 0x7F
+        if length == 126:
+            ext = sock.recv(2)
+            if len(ext) < 2:
+                return None, b""
+            length = struct.unpack("!H", ext)[0]
+        elif length == 127:
+            ext = sock.recv(8)
+            if len(ext) < 8:
+                return None, b""
+            length = struct.unpack("!Q", ext)[0]
+        mask_key = b""
+        if masked:
+            mask_key = sock.recv(4)
+            if len(mask_key) < 4:
+                return None, b""
+        payload = bytearray()
+        while len(payload) < length:
+            chunk = sock.recv(min(65536, length - len(payload)))
+            if not chunk:
+                return None, b""
+            payload.extend(chunk)
+        if masked and mask_key:
+            for i in range(len(payload)):
+                payload[i] ^= mask_key[i & 3]
+        return opcode, bytes(payload)
+    except Exception:
+        return None, b""
+
+
+def broadcast_ws(msg_obj: dict, target_cid: str | None = None) -> None:
+    """Đẩy sự kiện JSON tới tất cả WebSocket client đang mở."""
+    raw = json.dumps(msg_obj, ensure_ascii=False)
+    dead = []
+    with _ws_lock:
+        clients = list(_ws_clients)
+    for c in clients:
+        if target_cid and c.get("cid") and c.get("cid") != target_cid:
+            continue
+        if not ws_send_frame(c, raw):
+            dead.append(c)
+    if dead:
+        with _ws_lock:
+            for d in dead:
+                if d in _ws_clients:
+                    _ws_clients.remove(d)
+
+
+def compute_overview_fingerprint(ov: dict) -> str:
+    parts = []
+    for c in ov.get("pinnedConversations", []):
+        parts.append(f"P:{c['id']}:{c.get('title','')}:{c['isRunning']}:{c['unread']}:{c['stepCount']}:{c['relativeTime']}")
+    for p in ov.get("projects", []):
+        for c in p.get("conversations", [])[:25]:
+            parts.append(f"{p['name']}:{c['id']}:{c.get('title','')}:{c['isRunning']}:{c['unread']}:{c['stepCount']}:{c['relativeTime']}")
+    return "|".join(parts)
+
+
+def compute_conv_fingerprint(detail: dict) -> str:
+    msgs = detail.get("messages") or []
+    last = msgs[-1] if msgs else {}
+    tcs = last.get("toolCalls") or []
+    last_tc_out = len(str(tcs[-1].get("output") or "")) if tcs else 0
+    return (
+        f"{detail.get('status')}:{detail.get('isRunning')}:{detail.get('pinned')}:"
+        f"{detail.get('stepCount')}:{len(msgs)}:{last.get('id','')}:"
+        f"{len(str(last.get('content','')))}:{len(str(last.get('thinking','')))}:"
+        f"{len(tcs)}:{last_tc_out}"
+    )
+
+
+def trigger_immediate_ws_sync(force_cid: str | None = None) -> None:
+    """Đẩy ngay bản cập nhật overview + hội thoại qua WebSocket khi có thao tác mới."""
+    try:
+        with _ws_lock:
+            has_clients = len(_ws_clients) > 0
+            sub_cids = {c.get("cid") for c in _ws_clients if c.get("cid")}
+        if not has_clients:
+            return
+        ov = build_local_overview(APP_CONFIG)
+        fp = compute_overview_fingerprint(ov)
+        if fp != _last_ov_fingerprint[0]:
+            _last_ov_fingerprint[0] = fp
+            broadcast_ws({"type": "overview", "data": ov})
+        target_cids = set(sub_cids)
+        if force_cid:
+            target_cids.add(force_cid)
+        for cid in target_cids:
+            if not cid:
+                continue
+            detail = read_local_conversation_detail(str(cid), APP_CONFIG)
+            cfp = compute_conv_fingerprint(detail)
+            if _last_conv_fingerprints.get(str(cid)) != cfp or str(cid) == force_cid:
+                _last_conv_fingerprints[str(cid)] = cfp
+                broadcast_ws({"type": "conversation", "conversationId": str(cid), "data": detail}, target_cid=str(cid))
+    except Exception:
+        pass
+
+
+def _realtime_ws_watcher_loop() -> None:
+    """Luồng nền theo dõi thay đổi của Antigravity IDE mỗi 0.55s và đồng bộ tức thì qua WebSocket."""
+    while True:
+        time.sleep(0.55)
+        try:
+            with _ws_lock:
+                if not _ws_clients:
+                    continue
+                sub_cids = {str(c.get("cid")) for c in _ws_clients if c.get("cid")}
+            ov = build_local_overview(APP_CONFIG)
+            fp = compute_overview_fingerprint(ov)
+            if fp != _last_ov_fingerprint[0]:
+                _last_ov_fingerprint[0] = fp
+                broadcast_ws({"type": "overview", "data": ov})
+
+            # Đồng bộ các hội thoại đang mở trên màn hình hoặc đang chạy (Running)
+            for p in ov.get("projects", []):
+                for c in p.get("conversations", [])[:10]:
+                    if c.get("isRunning") and c.get("id"):
+                        sub_cids.add(str(c["id"]))
+
+            for cid in list(sub_cids)[:15]:
+                if not cid or cid.startswith("pending_"):
+                    continue
+                detail = read_local_conversation_detail(cid, APP_CONFIG)
+                cfp = compute_conv_fingerprint(detail)
+                if _last_conv_fingerprints.get(cid) != cfp:
+                    _last_conv_fingerprints[cid] = cfp
+                    broadcast_ws({"type": "conversation", "conversationId": cid, "data": detail}, target_cid=cid)
+        except Exception:
+            continue
+
+
+# ============================================================================
+# 2. BỘ TẠO MÃ QR SVG 100% OFFLINE (ZERO-DATA-LEAK, KHÔNG GỌI SERVER NGOÀI)
 # ============================================================================
 
 def make_qr_matrix(text: str) -> list[list[bool]]:
@@ -308,7 +492,7 @@ def generate_qr_data_url(text: str) -> str:
 
 
 # ============================================================================
-# 2. CẤU HÌNH BẢO MẬT MÃ PIN, CHÍNH SÁCH MẠNG & ĐỊA CHỈ LAN / TAILSCALE
+# 3. CẤU HÌNH BẢO MẬT MÃ PIN, CHÍNH SÁCH MẠNG & ĐỊA CHỈ LAN / TAILSCALE
 # ============================================================================
 
 def _generate_random_pin() -> str:
@@ -396,7 +580,7 @@ def find_available_port(preferred: int) -> int:
 
 
 # ============================================================================
-# 3. KẾT NỐI TRỰC TIẾP VỚI ỨNG DỤNG ANTIGRAVITY DESKTOP TRÊN MÁY (CONNECT RPC)
+# 4. KẾT NỐI TRỰC TIẾP VỚI ỨNG DỤNG ANTIGRAVITY DESKTOP TRÊN MÁY (CONNECT RPC)
 # ============================================================================
 
 def uri_to_path(uri: str) -> str:
@@ -413,7 +597,7 @@ def _instance_label(exe: str) -> tuple[str, str]:
     m = re.search(r"\\apps\\acct(\d+)\\", e)
     if m:
         return f"acct{m.group(1)}", f"Antigravity #{m.group(1)}"
-    return "chinh", "Antigravity (Chính)"
+    return "chinh", "Antigravity (app chính)"
 
 
 class LocalAgInstance:
@@ -523,7 +707,6 @@ def discover_local_antigravity_instances(force: bool = False) -> list[LocalAgIns
         procs: list[dict] = []
         ports_by_pid: dict[int, list[int]] = {}
 
-        # Ưu tiên psutil nếu có sẵn (nhanh <20ms)
         used_psutil = False
         try:
             import psutil  # type: ignore
@@ -574,7 +757,6 @@ def discover_local_antigravity_instances(force: bool = False) -> list[LocalAgIns
             if procs:
                 pids_set = {int(p.get("ProcessId") or 0) for p in procs if p.get("ProcessId")}
                 try:
-                    # netstat -ano -p tcp nhanh gấp 20 lần Get-NetTCPConnection
                     ns = subprocess.run(
                         ["netstat", "-ano", "-p", "tcp"],
                         capture_output=True,
@@ -670,7 +852,7 @@ def get_cached_user_config(
 
 
 # ============================================================================
-# 4. ĐỌC DỮ LIỆU HỘI THOẠI (TRANSCRIPT.JSONL + SQLITE PROTOBUF FALLBACK)
+# 5. ĐỌC CẤU TRÚC PROJECTS, ANNOTATIONS, CUSTOMIZATIONS & TRANSCRIPT REALTIME
 # ============================================================================
 
 def _varint(b: bytes, i: int) -> tuple[int, int]:
@@ -754,24 +936,39 @@ def pb_get(msg: dict | None, *path: int):
 def parse_iso_epoch(s: str) -> float:
     if not s:
         return 0.0
+    m = re.match(r"(\d{4}-\d\d-\d\d)[T ](\d\d:\d\d:\d\d)(?:\.(\d+))?", str(s))
+    if m:
+        try:
+            dt = datetime.datetime.strptime(f"{m[1]} {m[2]}", "%Y-%m-%d %H:%M:%S").replace(
+                tzinfo=datetime.timezone.utc
+            )
+            frac = float("0." + (m[3][:6] if m[3] else "0"))
+            return dt.timestamp() + frac
+        except ValueError:
+            pass
     try:
-        return datetime.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+        return datetime.datetime.fromisoformat(str(s).replace("Z", "+00:00")).timestamp()
     except Exception:
         return 0.0
 
 
 def format_relative_time(epoch: float, now: float | None = None) -> str:
+    """Định dạng thời gian chuẩn Google Antigravity: now, 2m, 4h, 7d, 1mo, 1y."""
+    if not epoch or epoch <= 0:
+        return ""
     now = now or time.time()
-    if epoch <= 0:
-        return "vừa xong"
-    diff = max(0, int(now - epoch))
+    diff = max(0.0, now - epoch)
     if diff < 60:
-        return "vừa xong"
+        return "now"
     if diff < 3600:
-        return f"{diff // 60} phút"
+        return f"{int(diff // 60)}m"
     if diff < 86400:
-        return f"{diff // 3600} giờ"
-    return f"{diff // 86400} ngày"
+        return f"{int(diff // 3600)}h"
+    if diff < 86400 * 30:
+        return f"{int(diff // 86400)}d"
+    if diff < 86400 * 365:
+        return f"{max(1, int(diff // (86400 * 30)))}mo"
+    return f"{max(1, int(diff // (86400 * 365)))}y"
 
 
 def clean_user_prompt_text(raw: str) -> str:
@@ -787,6 +984,16 @@ def clean_user_prompt_text(raw: str) -> str:
 
 
 def load_annotations_map() -> dict[str, dict]:
+    now = time.time()
+    if _annotations_cache["data"] and (now - _annotations_cache["at"]) < 1.8:
+        base = dict(_annotations_cache["data"])
+        for cid, p_val in _pinned_overrides.items():
+            base.setdefault(cid, {"pinned": p_val, "lastUserViewEpoch": 0.0, "title": ""})["pinned"] = p_val
+        for cid, v_ts in _viewed_overrides.items():
+            if cid in base and v_ts > base[cid].get("lastUserViewEpoch", 0.0):
+                base[cid]["lastUserViewEpoch"] = v_ts
+        return base
+
     out: dict[str, dict] = {}
     if not ANNOTATIONS_DIR.is_dir():
         return out
@@ -795,55 +1002,214 @@ def load_annotations_map() -> dict[str, dict]:
         try:
             txt = f.read_text(encoding="utf-8", errors="replace")
             pinned = bool(re.search(r"\bpinned:\s*true\b", txt))
+            if cid in _pinned_overrides:
+                pinned = _pinned_overrides[cid]
+            m_sec = re.search(r"last_user_view_time:\s*\{\s*seconds:\s*(\d+)", txt)
+            view_ts = float(m_sec.group(1)) if m_sec else 0.0
+            if cid in _viewed_overrides and _viewed_overrides[cid] > view_ts:
+                view_ts = _viewed_overrides[cid]
             m_title = re.search(r'\btitle:\s*"((?:[^"\\]|\\.)*)"', txt)
-            title = m_title.group(1) if m_title else ""
-            out[cid] = {"pinned": pinned, "title": title}
+            title = m_title.group(1).replace('\\"', '"') if m_title else ""
+            out[cid] = {"pinned": pinned, "lastUserViewEpoch": view_ts, "title": title}
         except Exception:
             continue
+    _annotations_cache["at"] = now
+    _annotations_cache["data"] = out
     return out
+
+
+def load_projects_config() -> dict[str, dict]:
+    """Đọc ~/.gemini/config/projects/*.json để hiển thị đúng tên Project chuẩn Antigravity (AG, CLI Project, ...)."""
+    now = time.time()
+    if _projects_cfg_cache["data"] and (now - _projects_cfg_cache["at"]) < 25.0:
+        return _projects_cfg_cache["data"]
+    out: dict[str, dict] = {}
+    if PROJECTS_DIR.is_dir():
+        for p in PROJECTS_DIR.glob("*.json"):
+            try:
+                d = json.loads(p.read_text(encoding="utf-8", errors="replace"))
+            except Exception:
+                continue
+            pid = str(d.get("id") or p.stem)
+            name = str(d.get("name") or pid)
+            folder_uri = ""
+            resources = (d.get("projectResources") or {}).get("resources") or []
+            if resources and isinstance(resources[0], dict):
+                r0 = resources[0]
+                folder_uri = str(r0.get("folderUri") or (r0.get("gitFolder") or {}).get("folderUri") or "")
+            out[pid] = {
+                "id": pid,
+                "name": name,
+                "folderUri": folder_uri,
+                "folderPath": uri_to_path(folder_uri) if folder_uri else "",
+            }
+    out.setdefault("default-cli-project", {
+        "id": "default-cli-project",
+        "name": "CLI Project",
+        "folderUri": "",
+        "folderPath": str(HOME),
+    })
+    _projects_cfg_cache["at"] = now
+    _projects_cfg_cache["data"] = out
+    return out
+
+
+def discover_local_customizations() -> dict:
+    """Quét thật danh sách Rules, Skills và MCP Servers trên máy PC cho cửa sổ Customizations."""
+    rules = []
+    for r_path in [
+        HOME / ".gemini" / "GEMINI.md",
+        HOME / "Documents" / "AG" / "AGENTS.md",
+        Path.cwd() / "AGENTS.md",
+    ]:
+        try:
+            if r_path.is_file():
+                rules.append({
+                    "name": r_path.name,
+                    "path": str(r_path),
+                    "size": r_path.stat().st_size,
+                })
+        except Exception:
+            continue
+
+    skills = []
+    seen_skills: set[str] = set()
+    for s_root in [
+        HOME / "Documents" / "AG" / ".agents" / "skills",
+        HOME / ".gemini" / "antigravity" / "builtin" / "skills",
+    ]:
+        if not s_root.is_dir():
+            continue
+        for sk_dir in sorted(s_root.iterdir()):
+            sk_md = sk_dir / "SKILL.md"
+            if sk_md.is_file() and sk_dir.name not in seen_skills:
+                seen_skills.add(sk_dir.name)
+                desc = ""
+                try:
+                    raw = sk_md.read_text(encoding="utf-8", errors="replace")[:800]
+                    m_d = re.search(r"description:\s*(.+)", raw)
+                    if m_d:
+                        desc = m_d.group(1).strip().strip('"\'')[:140]
+                except Exception:
+                    pass
+                skills.append({
+                    "name": sk_dir.name,
+                    "description": desc or f"Antigravity Skill ({sk_dir.name})",
+                    "path": str(sk_md),
+                })
+
+    mcp_servers = []
+    mcp_root = ANTIGRAVITY_DIR / "mcp"
+    if mcp_root.is_dir():
+        for m_dir in sorted(mcp_root.iterdir()):
+            if m_dir.is_dir():
+                tools_count = len(list(m_dir.glob("*.json")))
+                mcp_servers.append({
+                    "name": m_dir.name,
+                    "toolsCount": tools_count,
+                    "status": "Connected",
+                })
+
+    return {
+        "ok": True,
+        "host": HOST_NAME,
+        "rules": rules,
+        "skills": skills,
+        "mcpServers": mcp_servers,
+    }
+
+
+def _refresh_live_rpc_state(instances: list[LocalAgInstance]) -> None:
+    now = time.time()
+    if (now - float(_live_rpc_cache.get("at") or 0)) < 1.2:
+        return
+    _live_rpc_cache["at"] = now
+    live_summaries: dict = {}
+    models_list = list(_live_rpc_cache.get("models") or DEFAULT_MODELS)
+    account_email = str(_live_rpc_cache.get("email") or "")
+    account_tier = str(_live_rpc_cache.get("tier") or "")
+
+    for inst in instances:
+        try:
+            res = inst.rpc("GetAllCascadeTrajectories", {}, timeout=3)
+            if isinstance(res, dict) and isinstance(res.get("trajectorySummaries"), dict):
+                for k, v in res["trajectorySummaries"].items():
+                    if k not in live_summaries or "RUNNING" in str(v.get("status") or ""):
+                        live_summaries[k] = v
+        except Exception:
+            pass
+        if (now - float(_live_rpc_cache.get("models_at") or 0)) >= 30.0 or not account_email:
+            try:
+                us = (inst.rpc("GetUserStatus", timeout=3) or {}).get("userStatus") or {}
+                if us and not account_email:
+                    account_email = str(us.get("email") or "")
+                    t_raw = us.get("userTier")
+                    account_tier = str(t_raw.get("name") or "") if isinstance(t_raw, dict) else str(t_raw or "")
+                cfgs = ((us.get("cascadeModelConfigData") or {}).get("clientModelConfigs")) or []
+                if cfgs:
+                    parsed_m = []
+                    for c in cfgs:
+                        m_id = str(((c.get("modelOrAlias") or {}).get("model")) or "")
+                        lbl = str(c.get("label") or "")
+                        if m_id and lbl:
+                            m_tier = re.match(r"^(.*?)\s*\(([^()]+)\)\s*$", lbl)
+                            b_name = m_tier.group(1).strip() if m_tier else lbl
+                            t_name = m_tier.group(2).strip() if m_tier else ""
+                            parsed_m.append({
+                                "id": m_id,
+                                "label": lbl,
+                                "name": b_name,
+                                "tier": t_name,
+                                "tag": str(c.get("tagTitle") or ""),
+                                "cliModel": "flash" if "flash" in lbl.lower() else "pro",
+                                "remainingFraction": float(((c.get("quotaInfo") or {}).get("remainingFraction")) or 1.0),
+                            })
+                    if parsed_m:
+                        parsed_m.sort(key=lambda x: (0 if "Argon (High)" in x["label"] else 1, x["label"]))
+                        models_list = parsed_m
+                        _live_rpc_cache["models_at"] = now
+            except Exception:
+                pass
+
+    _live_rpc_cache["summaries"] = live_summaries
+    _live_rpc_cache["models"] = models_list
+    _live_rpc_cache["email"] = account_email
+    _live_rpc_cache["tier"] = account_tier
 
 
 def build_local_overview(cfg: dict) -> dict:
     now = time.time()
     instances = discover_local_antigravity_instances()
+    _refresh_live_rpc_state(instances)
     ann_map = load_annotations_map()
+    proj_cfg = load_projects_config()
     pinned_map: dict = cfg.get("pinned", {})
     custom_convs: dict = cfg.get("customConvs", {})
 
-    live_summaries: dict = {}
-    models_list = list(DEFAULT_MODELS)
-    account_email = ""
-    account_tier = ""
+    live_summaries: dict = _live_rpc_cache.get("summaries") or {}
+    models_list: list = _live_rpc_cache.get("models") or list(DEFAULT_MODELS)
+    account_email = str(_live_rpc_cache.get("email") or "")
+    account_tier = str(_live_rpc_cache.get("tier") or "")
 
-    for inst in instances:
-        res = inst.rpc("GetAllCascadeTrajectories", {})
-        if isinstance(res, dict) and isinstance(res.get("trajectorySummaries"), dict):
-            live_summaries.update(res["trajectorySummaries"])
-        us = (inst.rpc("GetUserStatus") or {}).get("userStatus") or {}
-        if us and not account_email:
-            account_email = str(us.get("email") or "")
-            t_raw = us.get("userTier")
-            account_tier = str(t_raw.get("name") or "") if isinstance(t_raw, dict) else str(t_raw or "")
-        cfgs = ((us.get("cascadeModelConfigData") or {}).get("clientModelConfigs")) or []
-        if cfgs:
-            parsed_m = []
-            for c in cfgs:
-                m_id = str(((c.get("modelOrAlias") or {}).get("model")) or "")
-                lbl = str(c.get("label") or "")
-                if m_id and lbl:
-                    parsed_m.append({
-                        "id": m_id,
-                        "label": lbl,
-                        "name": lbl.split("(")[0].strip(),
-                        "tier": "High" if "High" in lbl else ("Low" if "Low" in lbl else "Pro"),
-                        "tag": str(c.get("tagTitle") or ""),
-                        "cliModel": "flash" if "flash" in lbl.lower() else "pro",
-                        "remainingFraction": float(((c.get("quotaInfo") or {}).get("remainingFraction")) or 1.0),
-                    })
-            if parsed_m:
-                models_list = parsed_m
-
+    preferred_order = [
+        "e3009192-6136-4652-a8f6-1f1238312ad6",  # AG
+        "default-cli-project",                    # CLI Project
+        "6dafd2cc-8835-48d1-ac12-b0b75c1a904c",  # Bàn Antigravity _ Luyenco
+        "d566b749-893d-4391-a6c9-284baa82fae2",  # VŨ DANH DỰ ANTIGRAVITY
+        "4352ca4c-e63a-451a-a883-adf55240e192",  # VU DANH DU BUSINESSS
+        "5a0a5a50-ac74-4241-893c-c3b17412801d",  # VŨ DANH DỰ APP
+    ]
     projects_map: dict[str, dict] = {}
+    for pid in preferred_order:
+        if pid in proj_cfg:
+            projects_map[pid] = {
+                "id": pid,
+                "name": proj_cfg[pid]["name"],
+                "folderPath": proj_cfg[pid]["folderPath"],
+                "totalCount": 0,
+                "conversations": [],
+            }
+
     pinned_items: list[dict] = []
     seen_cids: set[str] = set()
 
@@ -866,71 +1232,127 @@ def build_local_overview(cfg: dict) -> dict:
     for cid, title, preview, step_count, last_mod_str, ws_uris_str, status, project_id, not_fully_idle in rows:
         seen_cids.add(cid)
         live = live_summaries.get(cid) or {}
+        live_ann = live.get("annotations") or {}
         ann = ann_map.get(cid) or {}
-        final_title = str(live.get("summary") or ann.get("title") or title or f"Phiên {cid[:8]}").strip()
-        pid = str(project_id or ((live.get("trajectoryMetadata") or {}).get("projectId")) or "local-workspace")
-        folder_path = ""
+
+        final_title = (
+            str(live.get("summary") or "").strip()
+            or str(ann.get("title") or "").strip()
+            or str(title or "").strip()
+        )
+        if not final_title:
+            continue
+
+        pid = str(project_id or "").strip()
+        if not pid:
+            live_meta = live.get("trajectoryMetadata") or {}
+            pid = str(live_meta.get("projectId") or "outside-of-project")
+        if pid == "outside-of-project":
+            continue
+
+        p_info = proj_cfg.get(pid)
+        if not p_info:
+            folder_path = ""
+            try:
+                uris = json.loads(ws_uris_str or "[]")
+                if uris:
+                    folder_path = uri_to_path(uris[0])
+            except Exception:
+                pass
+            p_name = Path(folder_path).name if folder_path else pid
+            p_info = {"id": pid, "name": p_name, "folderPath": folder_path}
+        p_name = p_info["name"]
+
+        ws_prefix = ""
         try:
-            uris = json.loads(ws_uris_str or "[]")
-            if uris:
-                folder_path = uri_to_path(uris[0])
+            ws_list = json.loads(ws_uris_str or "[]")
+            if ws_list and pid == "default-cli-project":
+                folder_name = Path(urllib.parse.unquote(ws_list[0].replace("file:///", ""))).name
+                if folder_name and folder_name not in final_title:
+                    ws_prefix = folder_name
         except Exception:
             pass
-        proj_name = Path(folder_path).name if folder_path else (pid if pid != "local-workspace" else f"Antigravity ({HOST_NAME})")
+
         mod_epoch = max(parse_iso_epoch(str(last_mod_str or "")), parse_iso_epoch(str(live.get("lastModifiedTime") or "")))
-        t_jsonl = BRAIN_DIR / cid / ".system_generated" / "logs" / "transcript.jsonl"
-        is_running = "RUNNING" in str(live.get("status") or status or "") or bool(not_fully_idle)
-        if t_jsonl.exists():
+        view_epoch = float(ann.get("lastUserViewEpoch") or 0.0)
+        if cid in _viewed_overrides and _viewed_overrides[cid] > view_epoch:
+            view_epoch = _viewed_overrides[cid]
+
+        live_status = str(live.get("status") or status or "CASCADE_RUN_STATUS_IDLE")
+        is_running = "RUNNING" in live_status or bool(not_fully_idle)
+
+        if (now - mod_epoch) < 7200:
+            t_jsonl = BRAIN_DIR / cid / ".system_generated" / "logs" / "transcript.jsonl"
             try:
-                mt = t_jsonl.stat().st_mtime
-                mod_epoch = max(mod_epoch, mt)
-                if (now - mt) < 8.0:
-                    is_running = True
+                if t_jsonl.exists():
+                    mt = t_jsonl.stat().st_mtime
+                    if mt > mod_epoch:
+                        mod_epoch = mt
+                    if (now - mt) < 10.0:
+                        is_running = True
+                        live_status = "CASCADE_RUN_STATUS_RUNNING"
             except OSError:
                 pass
+
         opt = _optimistic_convs.get(cid)
         if opt and (now - float(opt.get("createdAt") or 0)) < 15.0:
             is_running = True
+            live_status = "CASCADE_RUN_STATUS_RUNNING"
             mod_epoch = max(mod_epoch, float(opt.get("createdAt") or now))
-        is_pinned = bool(pinned_map[cid]) if cid in pinned_map else bool(ann.get("pinned", False))
+
+        is_unread = (
+            (view_epoch > 0 and (mod_epoch - view_epoch) > 5 and (now - mod_epoch) < 86400 * 2)
+            or (pid == "default-cli-project" and view_epoch == 0.0 and cid not in _viewed_overrides)
+        )
+
+        is_pinned = (
+            bool(pinned_map[cid])
+            if cid in pinned_map
+            else (bool(_pinned_overrides[cid]) if cid in _pinned_overrides else (bool(ann.get("pinned")) or bool(live_ann.get("pinned"))))
+        )
+
         item = {
             "id": cid,
             "title": final_title,
-            "workspaceTag": folder_path,
+            "workspaceTag": ws_prefix,
             "projectId": pid,
-            "projectName": proj_name,
+            "projectName": p_name,
             "stepCount": int(live.get("stepCount") or step_count or 0),
             "lastModifiedEpoch": mod_epoch or now,
             "relativeTime": format_relative_time(mod_epoch or now, now),
             "status": "CASCADE_RUN_STATUS_RUNNING" if is_running else "CASCADE_RUN_STATUS_IDLE",
             "isRunning": is_running,
-            "unread": False,
+            "unread": is_unread,
             "pinned": is_pinned,
         }
         if is_pinned:
             pinned_items.append(item)
+
         if pid not in projects_map:
             projects_map[pid] = {
                 "id": pid,
-                "name": proj_name,
-                "folderPath": folder_path or str(HOME),
+                "name": p_name,
+                "folderPath": p_info.get("folderPath") or str(HOME),
                 "totalCount": 0,
                 "conversations": [],
             }
         projects_map[pid]["totalCount"] += 1
-        projects_map[pid]["conversations"].append(item)
+        if len(projects_map[pid]["conversations"]) < 100:
+            projects_map[pid]["conversations"].append(item)
 
+    # Thêm các hội thoại vừa tạo (optimistic) hoặc lưu cục bộ chưa kịp vào summaries.db
     for cid, c_conv in custom_convs.items():
         if cid in seen_cids or not isinstance(c_conv, dict):
             continue
-        pid = str(c_conv.get("projectId") or "local-workspace")
-        proj_name = str(c_conv.get("projectName") or f"Antigravity ({HOST_NAME})")
+        pid = str(c_conv.get("projectId") or "e3009192-6136-4652-a8f6-1f1238312ad6")
+        p_info = proj_cfg.get(pid) or {"id": pid, "name": str(c_conv.get("projectName") or "AG"), "folderPath": str(HOME)}
+        proj_name = p_info["name"]
         mod_epoch = float(c_conv.get("lastModifiedEpoch") or now)
         is_pinned = bool(pinned_map.get(cid, c_conv.get("pinned", False)))
         is_running = bool(c_conv.get("isRunning", False)) and ((now - mod_epoch) < 120.0)
         item = {
             "id": cid,
-            "title": str(c_conv.get("title") or f"Phiên {cid[:8]}"),
+            "title": str(c_conv.get("title") or f"Conversation {cid[:8]}"),
             "workspaceTag": "",
             "projectId": pid,
             "projectName": proj_name,
@@ -948,33 +1370,47 @@ def build_local_overview(cfg: dict) -> dict:
             projects_map[pid] = {
                 "id": pid,
                 "name": proj_name,
-                "folderPath": str(c_conv.get("folderPath") or HOME),
+                "folderPath": p_info.get("folderPath") or str(HOME),
                 "totalCount": 0,
                 "conversations": [],
             }
         projects_map[pid]["totalCount"] += 1
         projects_map[pid]["conversations"].insert(0, item)
 
-    projects_out = list(projects_map.values())
+    for p in projects_map.values():
+        p["conversations"].sort(key=lambda x: -x["lastModifiedEpoch"])
+
+    pinned_items.sort(key=lambda x: (0 if x["projectName"] == "AG" else 1, -x["lastModifiedEpoch"]))
+
+    projects_out = [
+        p for p in projects_map.values() if p["totalCount"] > 0 or p["id"] in preferred_order[:2]
+    ]
     if not projects_out:
         projects_out.append({
-            "id": "local-workspace",
-            "name": f"Antigravity ({HOST_NAME})",
-            "folderPath": str(HOME),
+            "id": "e3009192-6136-4652-a8f6-1f1238312ad6",
+            "name": "AG",
+            "folderPath": str(HOME / "Documents" / "AG"),
             "totalCount": 0,
             "conversations": [],
         })
 
     return {
         "host": {
+            "id": HOST_NAME,
             "name": HOST_NAME,
-            "online": len(instances) > 0,
+            "online": True,
             "accountEmail": account_email,
             "accountTier": account_tier,
             "instances": [
-                {"id": i.name, "name": HOST_NAME, "label": f"{i.label} (PID {i.pid})", "pid": i.pid, "online": True}
+                {
+                    "id": i.name,
+                    "name": HOST_NAME if i.name == "chinh" else f"{HOST_NAME} ({i.label})",
+                    "label": f"{i.label} (PID {i.pid})",
+                    "pid": i.pid,
+                    "online": True,
+                }
                 for i in instances
-            ] or [{"id": "local-pc", "name": HOST_NAME, "label": f"Máy PC ({HOST_NAME})", "pid": 0, "online": False}],
+            ] or [{"id": "chinh", "name": HOST_NAME, "label": "Antigravity (app chính)", "pid": 0, "online": True}],
         },
         "models": models_list,
         "pinnedConversations": pinned_items,
@@ -987,6 +1423,7 @@ def build_local_overview(cfg: dict) -> dict:
 def read_local_conversation_detail(cid: str, cfg: dict, limit_steps: int = 180) -> dict:
     pinned_map = cfg.get("pinned", {})
     ann_map = load_annotations_map()
+    proj_cfg = load_projects_config()
     custom_convs = cfg.get("customConvs", {})
     saved_custom = custom_convs.get(cid) if isinstance(custom_convs.get(cid), dict) else {}
 
@@ -1001,12 +1438,11 @@ def read_local_conversation_detail(cid: str, cfg: dict, limit_steps: int = 180) 
 
     if source_jsonl.exists():
         try:
-            # Đọc tối đa 2MB cuối file để tốc độ phản hồi luôn <5ms ngay cả với phiên dài
             f_size = source_jsonl.stat().st_size
             with source_jsonl.open("rb") as fb:
                 if f_size > 2 * 1024 * 1024:
                     fb.seek(f_size - 2 * 1024 * 1024)
-                    fb.readline()  # bỏ dòng bị cắt dở đầu đoạn seek
+                    fb.readline()
                 raw_text = fb.read().decode("utf-8", errors="replace")
             lines = raw_text.splitlines()
             for idx, raw_line in enumerate(lines[-limit_steps:]):
@@ -1104,7 +1540,6 @@ def read_local_conversation_detail(cid: str, cfg: dict, limit_steps: int = 180) 
         except Exception:
             pass
 
-    # Fallback đọc từ SQLite <cid>.db nếu không có transcript.jsonl
     if not messages and db_path.exists():
         try:
             with sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=3) as con:
@@ -1184,9 +1619,15 @@ def read_local_conversation_detail(cid: str, cfg: dict, limit_steps: int = 180) 
             messages.append(opt_msg)
             any_running_step = True
 
-    title = str((ann_map.get(cid) or {}).get("title") or saved_custom.get("title") or "")
-    proj_id = str(saved_custom.get("projectId") or "local-workspace")
-    status_db = ""
+    live_s = (_live_rpc_cache.get("summaries") or {}).get(cid) or {}
+    title = str(
+        live_s.get("summary")
+        or (ann_map.get(cid) or {}).get("title")
+        or saved_custom.get("title")
+        or ""
+    )
+    proj_id = str(saved_custom.get("projectId") or "e3009192-6136-4652-a8f6-1f1238312ad6")
+    status_db = str(live_s.get("status") or "")
     not_idle_db = 0
     if SUMMARIES_DB.exists():
         try:
@@ -1198,10 +1639,12 @@ def read_local_conversation_detail(cid: str, cfg: dict, limit_steps: int = 180) 
                 if row:
                     title = title or str(row[0] or "")
                     proj_id = str(row[1] or proj_id)
-                    status_db = str(row[2] or "")
+                    status_db = status_db or str(row[2] or "")
                     not_idle_db = int(row[3] or 0)
         except Exception:
             pass
+
+    p_name = (proj_cfg.get(proj_id) or {}).get("name") or str(saved_custom.get("projectName") or "AG")
 
     is_running = (
         any_running_step
@@ -1216,13 +1659,17 @@ def read_local_conversation_detail(cid: str, cfg: dict, limit_steps: int = 180) 
         except OSError:
             pass
 
-    is_pinned = bool(pinned_map[cid]) if cid in pinned_map else bool((ann_map.get(cid) or {}).get("pinned", False))
+    is_pinned = (
+        bool(pinned_map[cid])
+        if cid in pinned_map
+        else (bool(_pinned_overrides[cid]) if cid in _pinned_overrides else bool((ann_map.get(cid) or {}).get("pinned", False)))
+    )
 
     return {
         "id": cid,
-        "title": title or f"Phiên {cid[:8]}",
+        "title": title or f"Conversation {cid[:8]}",
         "projectId": proj_id,
-        "projectName": str(saved_custom.get("projectName") or f"Antigravity ({HOST_NAME})"),
+        "projectName": p_name,
         "status": "CASCADE_RUN_STATUS_RUNNING" if is_running else "CASCADE_RUN_STATUS_IDLE",
         "isRunning": is_running,
         "pinned": is_pinned,
@@ -1241,7 +1688,6 @@ def save_and_prepare_media(
     if not media_list or not isinstance(media_list, list):
         return [], [], []
     safe_cid = re.sub(r"[^a-zA-Z0-9_.-]", "_", str(cid or "general"))
-    # Lưu vào cả thư mục brain/<cid>/.user_uploaded (chuẩn của Antigravity IDE) và UPLOADS_DIR dự phòng
     dest_dir = (BRAIN_DIR / safe_cid / ".user_uploaded") if re.fullmatch(r"[0-9a-fA-F-]{36}", safe_cid) else (UPLOADS_DIR / safe_cid)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1254,7 +1700,6 @@ def save_and_prepare_media(
             continue
         orig_name = str(item.get("name") or f"media_{idx + 1}.png").strip()
         safe_name = re.sub(r"[^a-zA-Z0-9_.-]", "_", orig_name) or f"media_{idx + 1}.png"
-        # Không cho phép upload file có đuôi nhạy cảm/thực thi
         ext = Path(safe_name).suffix.lower()
         if ext in {".exe", ".bat", ".cmd", ".ps1", ".vbs", ".scr", ".dll"}:
             safe_name += ".txt"
@@ -1337,7 +1782,7 @@ def is_safe_media_path(fpath: Path) -> bool:
 
 
 # ============================================================================
-# 5. CLOUDFLARE QUICK TUNNEL (ĐIỀU KHIỂN QUA 4G/5G KHÔNG CẦN MỞ PORT MODEM)
+# 6. CLOUDFLARE QUICK TUNNEL (ĐIỀU KHIỂN QUA 4G/5G KHÔNG CẦN MỞ PORT MODEM)
 # ============================================================================
 
 def ensure_cloudflared_binary() -> Path:
@@ -1433,7 +1878,7 @@ def stop_cloudflare_quick_tunnel() -> dict:
 
 
 # ============================================================================
-# 6. HTTP SERVER BẢO MẬT CAO (CHỐNG BRUTE-FORCE, SESSION TOKEN, SANDBOX)
+# 7. HTTP + WEBSOCKET SERVER BẢO MẬT CAO (CHỐNG BRUTE-FORCE, SESSION TOKEN, SANDBOX)
 # ============================================================================
 
 class ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -1442,7 +1887,7 @@ class ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
-    server_version = "AntigravityCompanionSelfHost/2.0"
+    server_version = "AntigravityCompanionSelfHost/2.1"
 
     def log_message(self, fmt: str, *args) -> None:
         return
@@ -1469,7 +1914,7 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, HEAD, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Companion-Pin, X-Companion-Session")
 
     def _send_json(self, obj: dict, status: int = 200) -> None:
@@ -1522,7 +1967,6 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
         ua = str(self.headers.get("User-Agent") or "Unknown Device")[:120]
         with _auth_lock:
             _failed_attempts.pop(client_ip, None)
-            # Tái sử dụng session nếu cùng IP + UA còn hạn
             for tok, info in list(_active_sessions.items()):
                 if (now - float(info.get("lastSeen") or 0)) > SESSION_TTL_SEC:
                     _active_sessions.pop(tok, None)
@@ -1559,7 +2003,7 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
             return True, 200, ""
 
         qs = urllib.parse.parse_qs(parsed_url.query)
-        candidate = (qs.get("pin") or qs.get("token") or [""])[0].strip()
+        candidate = (qs.get("pin") or qs.get("token") or qs.get("key") or [""])[0].strip()
         if not candidate:
             auth = str(self.headers.get("Authorization") or "").strip()
             if auth.lower().startswith("bearer "):
@@ -1570,7 +2014,6 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
         if not candidate:
             return False, 401, "Vui lòng nhập mã PIN 6 số để kết nối."
 
-        # Kiểm tra nếu là Session Token đã cấp (`ags_...`)
         if candidate.startswith("ags_"):
             with _auth_lock:
                 for tok, info in list(_active_sessions.items()):
@@ -1581,7 +2024,6 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
                         _active_sessions.pop(tok, None)
             return False, 401, "Phiên bảo mật đã hết hạn hoặc mã PIN đã được đổi mới."
 
-        # Kiểm tra mã PIN 6 số bằng hmac.compare_digest chống timing attack
         if hmac.compare_digest(candidate.encode("utf-8"), expected_pin.encode("utf-8")):
             with _auth_lock:
                 _failed_attempts.pop(client_ip, None)
@@ -1591,6 +2033,90 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
         if rem == 0:
             return False, 429, f"Bạn đã nhập sai {MAX_FAILED_ATTEMPTS} lần. IP {client_ip} bị khóa tạm 5 phút."
         return False, 401, f"Mã PIN bảo mật không chính xác (còn {rem} lần thử)."
+
+    def _handle_websocket_upgrade(self, parsed: urllib.parse.SplitResult) -> None:
+        ok_auth, err_status, err_msg = self._authenticate(parsed)
+        if not ok_auth:
+            self._send_json({"ok": False, "error": err_msg, "requirePin": True}, err_status)
+            return
+
+        ws_key = str(self.headers.get("Sec-WebSocket-Key") or "").strip()
+        if not ws_key:
+            self._send_json({"ok": False, "error": "Missing Sec-WebSocket-Key"}, 400)
+            return
+
+        accept_val = base64.b64encode(hashlib.sha1((ws_key + WS_MAGIC).encode("utf-8")).digest()).decode("utf-8")
+        self.protocol_version = "HTTP/1.1"
+        self.send_response(101, "Switching Protocols")
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept_val)
+        self._send_security_headers()
+        self.end_headers()
+
+        qs = urllib.parse.parse_qs(parsed.query)
+        initial_cid = (qs.get("cid") or [None])[0]
+        client_ip, via = self._client_ip_and_via()
+        client = {
+            "sock": self.request,
+            "lock": threading.Lock(),
+            "cid": initial_cid,
+            "ip": client_ip,
+            "via": via,
+        }
+        with _ws_lock:
+            _ws_clients.append(client)
+
+        try:
+            ov = build_local_overview(APP_CONFIG)
+            ws_send_frame(client, json.dumps({"type": "overview", "data": ov}, ensure_ascii=False))
+            if initial_cid:
+                _viewed_overrides[str(initial_cid)] = time.time()
+                detail = read_local_conversation_detail(str(initial_cid), APP_CONFIG)
+                ws_send_frame(
+                    client,
+                    json.dumps({"type": "conversation", "conversationId": str(initial_cid), "data": detail}, ensure_ascii=False),
+                )
+
+            while True:
+                opcode, payload = ws_read_frame(self.request)
+                if opcode is None or opcode == 0x8:  # Close
+                    break
+                if opcode == 0x9:  # Ping
+                    ws_send_frame(client, payload.decode("utf-8", errors="ignore"), opcode=0xA)
+                    continue
+                if opcode == 0x1:  # Text frame
+                    try:
+                        msg = json.loads(payload.decode("utf-8", errors="replace"))
+                    except ValueError:
+                        continue
+                    mtype = msg.get("type")
+                    if mtype == "ping":
+                        ws_send_frame(client, json.dumps({"type": "pong", "ts": int(time.time() * 1000)}))
+                    elif mtype == "subscribe":
+                        sub_cid = msg.get("conversationId") or None
+                        client["cid"] = sub_cid
+                        if sub_cid:
+                            _viewed_overrides[str(sub_cid)] = time.time()
+                            detail = read_local_conversation_detail(str(sub_cid), APP_CONFIG)
+                            _last_conv_fingerprints[str(sub_cid)] = compute_conv_fingerprint(detail)
+                            ws_send_frame(
+                                client,
+                                json.dumps({"type": "conversation", "conversationId": str(sub_cid), "data": detail}, ensure_ascii=False),
+                            )
+                    elif mtype == "refresh":
+                        ov = build_local_overview(APP_CONFIG)
+                        ws_send_frame(client, json.dumps({"type": "overview", "data": ov}, ensure_ascii=False))
+                        if client.get("cid"):
+                            detail = read_local_conversation_detail(str(client["cid"]), APP_CONFIG)
+                            ws_send_frame(
+                                client,
+                                json.dumps({"type": "conversation", "conversationId": str(client["cid"]), "data": detail}, ensure_ascii=False),
+                            )
+        finally:
+            with _ws_lock:
+                if client in _ws_clients:
+                    _ws_clients.remove(client)
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
@@ -1611,7 +2137,12 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": "Truy cập qua mạng LAN đang được khóa bởi chủ máy PC."}, 403)
             return
 
-        # Phục vụ giao diện Web Mobile tĩnh + Font + Icon 3D
+        # Hỗ trợ nâng cấp kết nối WebSocket Realtime (/ws hoặc /api/ag-companion/ws)
+        if str(self.headers.get("Upgrade") or "").lower() == "websocket" or path in ("/ws", "/api/ag-companion/ws"):
+            self._handle_websocket_upgrade(parsed)
+            return
+
+        # Phục vụ giao diện Web Antigravity + Font Google Sans + Icon 3D
         if path in ("/", "/index.html") or not path.startswith("/api/"):
             rel = path.lstrip("/") or "index.html"
             target = (WEB_DIR / rel).resolve()
@@ -1657,6 +2188,10 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(svg_bytes)
             return
 
+        if path == "/api/ag-companion/customizations":
+            self._send_json(discover_local_customizations())
+            return
+
         if path == "/api/ag-companion/connection-info":
             ips = get_lan_and_tailscale_ips()
             port = int(APP_CONFIG.get("port") or DEFAULT_PORT)
@@ -1670,6 +2205,8 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
                 sessions_list = list(_active_sessions.values())
                 audit_list = list(_security_audit_log[:25])
                 locked_count = sum(1 for v in _locked_ips.values() if v > time.time())
+            with _ws_lock:
+                ws_count = len(_ws_clients)
             self._send_json({
                 "ok": True,
                 "host": HOST_NAME,
@@ -1678,6 +2215,7 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
                 "allowLan": bool(APP_CONFIG.get("allowLan", True)),
                 "clientIp": client_ip,
                 "clientVia": via,
+                "wsClientsCount": ws_count,
                 "lanIp": ips["lan_ip"],
                 "lanUrl": lan_url,
                 "lanQrSvgDataUrl": generate_qr_data_url(lan_url),
@@ -1700,6 +2238,8 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
             with _auth_lock:
                 sessions_list = list(_active_sessions.values())
                 audit_list = list(_security_audit_log[:30])
+            with _ws_lock:
+                ws_count = len(_ws_clients)
             self._send_json({
                 "ok": True,
                 "host": HOST_NAME,
@@ -1707,6 +2247,7 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
                 "tunnelRunning": bool(_tunnel_state.get("running") and _tunnel_state.get("url")),
                 "clientIp": client_ip,
                 "clientVia": via,
+                "wsClientsCount": ws_count,
                 "activeSessions": sessions_list,
                 "auditLog": audit_list,
                 "dataLocation": str(ANTIGRAVITY_DIR),
@@ -1720,6 +2261,9 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
 
         if path.startswith("/api/ag-companion/conversation/"):
             cid = urllib.parse.unquote(path.split("/api/ag-companion/conversation/", 1)[1]).strip("/")
+            qs = urllib.parse.parse_qs(parsed.query)
+            if (qs.get("markRead") or ["1"])[0] == "1":
+                _viewed_overrides[cid] = time.time()
             self._send_json(read_local_conversation_detail(cid, APP_CONFIG))
             return
 
@@ -1759,7 +2303,6 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
         except Exception:
             body = {}
 
-        # Cho phép đăng nhập đổi PIN -> Session Token qua POST /api/ag-companion/auth-session
         if path == "/api/ag-companion/auth-session":
             pin_in = str(body.get("pin") or "").strip()
             fake_url = urllib.parse.urlsplit(f"{self.path}?pin={urllib.parse.quote(pin_in)}") if pin_in else parsed
@@ -1830,6 +2373,7 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
             cid = str(body.get("conversationId") or "").strip()
             pinned = bool(body.get("pinned", True))
             if cid:
+                _pinned_overrides[cid] = pinned
                 APP_CONFIG.setdefault("pinned", {})[cid] = pinned
                 save_config(APP_CONFIG)
                 instances = discover_local_antigravity_instances()
@@ -1851,6 +2395,7 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
                     ann_file.write_text(txt, encoding="utf-8")
                 except Exception:
                     pass
+                threading.Thread(target=trigger_immediate_ws_sync, args=(cid,), daemon=True).start()
             self._send_json({"ok": True, "conversationId": cid, "pinned": pinned})
             return
 
@@ -1869,6 +2414,7 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
             if cid in APP_CONFIG.get("customConvs", {}):
                 APP_CONFIG["customConvs"][cid]["isRunning"] = False
                 save_config(APP_CONFIG)
+            threading.Thread(target=trigger_immediate_ws_sync, args=(cid,), daemon=True).start()
             self._send_json({"ok": True, "conversationId": cid, "cancelled": cancelled})
             return
 
@@ -1887,11 +2433,10 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
             inst = instances[0] if instances else None
             real_cid = ""
             dispatched_to_ide = False
-            auto_title = title_in or (prompt.split("\n")[0][:70] if prompt else "Phiên giao việc kèm Media")
+            auto_title = title_in or (prompt.split("\n")[0][:70] if prompt else "New Conversation")
 
-            # 1. Ưu tiên tạo qua Connect RPC (StartCascade + SendUserCascadeMessage) siêu tốc <30ms
             if inst is not None:
-                eff_proj = proj_id if (proj_id and proj_id != "local-workspace") else "e3009192-6136-4652-a8f6-1f1238312ad6"
+                eff_proj = proj_id if (proj_id and proj_id not in ("local-workspace", "outside-of-project")) else "e3009192-6136-4652-a8f6-1f1238312ad6"
                 try:
                     sc = inst.rpc(
                         "StartCascade",
@@ -1921,6 +2466,7 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
                         "media": ui_media,
                         "createdAt": now_ep,
                     }
+                    _viewed_overrides[real_cid] = now_ep
                     dispatched_to_ide = True
 
                     def _bg_start_send() -> None:
@@ -1934,17 +2480,19 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
                             if cascade_media:
                                 payload_rpc["media"] = cascade_media
                             if inst.rpc("SendUserCascadeMessage", payload_rpc, timeout=25) is not None:
+                                trigger_immediate_ws_sync(real_cid)
                                 return
                         try:
                             inst.call_agentapi("send-message", real_cid, full_prompt)
                         except Exception:
                             pass
+                        trigger_immediate_ws_sync(real_cid)
 
                     threading.Thread(target=_bg_start_send, daemon=True).start()
-                    self._send_json({"ok": True, "conversationId": real_cid, "dispatchedToIde": True, "media": ui_media})
+                    threading.Thread(target=trigger_immediate_ws_sync, args=(real_cid,), daemon=True).start()
+                    self._send_json({"ok": True, "conversationId": real_cid, "title": auto_title, "dispatchedToIde": True, "media": ui_media})
                     return
 
-                # 2. Dự phòng qua agentapi new-conversation
                 try:
                     temp_cid = str(uuid.uuid4())
                     ui_media, _, file_notes = save_and_prepare_media(inst, temp_cid, media_raw)
@@ -1961,23 +2509,26 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
                     if new_c.get("conversationId"):
                         real_cid = str(new_c["conversationId"])
                         dispatched_to_ide = True
-                        self._send_json({"ok": True, "conversationId": real_cid, "dispatchedToIde": True, "media": ui_media})
+                        threading.Thread(target=trigger_immediate_ws_sync, args=(real_cid,), daemon=True).start()
+                        self._send_json({"ok": True, "conversationId": real_cid, "title": auto_title, "dispatchedToIde": True, "media": ui_media})
                         return
                 except Exception:
                     pass
 
-            # 3. Lưu yêu cầu cục bộ nếu Antigravity Desktop chưa mở
             real_cid = str(uuid.uuid4())
             ui_media, _, _ = save_and_prepare_media(None, real_cid, media_raw)
             now_ms = int(time.time() * 1000)
             u_msg: dict = {"id": f"u_{now_ms}", "role": "user", "content": prompt or "Phân tích media đính kèm", "timestamp": now_ms}
             if ui_media:
                 u_msg["media"] = ui_media
+            proj_cfg = load_projects_config()
+            eff_pid = proj_id or "e3009192-6136-4652-a8f6-1f1238312ad6"
+            eff_pname = (proj_cfg.get(eff_pid) or {}).get("name") or "AG"
             conv_obj = {
                 "id": real_cid,
                 "title": auto_title,
-                "projectId": proj_id or "local-workspace",
-                "projectName": f"Antigravity ({HOST_NAME})",
+                "projectId": eff_pid,
+                "projectName": eff_pname,
                 "isRunning": False,
                 "status": "CASCADE_RUN_STATUS_IDLE",
                 "lastModifiedEpoch": time.time(),
@@ -1994,7 +2545,8 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
             }
             APP_CONFIG.setdefault("customConvs", {})[real_cid] = conv_obj
             save_config(APP_CONFIG)
-            self._send_json({"ok": True, "conversationId": real_cid, "dispatchedToIde": False, "media": ui_media})
+            threading.Thread(target=trigger_immediate_ws_sync, args=(real_cid,), daemon=True).start()
+            self._send_json({"ok": True, "conversationId": real_cid, "title": auto_title, "dispatchedToIde": False, "media": ui_media})
             return
 
         if path == "/api/ag-companion/send":
@@ -2020,6 +2572,7 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
                 "media": ui_media,
                 "createdAt": now_ep,
             }
+            _viewed_overrides[cid] = now_ep
 
             dispatched = False
             if inst is not None:
@@ -2036,11 +2589,13 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
                             inst.rpc("LoadTrajectory", {"cascadeId": cid}, timeout=10)
                             res_rpc = inst.rpc("SendUserCascadeMessage", payload_rpc, timeout=25)
                         if res_rpc is not None:
+                            trigger_immediate_ws_sync(cid)
                             return
                     try:
                         inst.call_agentapi("send-message", cid, full_text)
                     except Exception:
                         pass
+                    trigger_immediate_ws_sync(cid)
 
                 threading.Thread(target=_bg_send_existing, daemon=True).start()
 
@@ -2053,6 +2608,7 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
             c_conv["isRunning"] = dispatched
             c_conv["lastModifiedEpoch"] = now_ep
             save_config(APP_CONFIG)
+            threading.Thread(target=trigger_immediate_ws_sync, args=(cid,), daemon=True).start()
             self._send_json({"ok": True, "conversationId": cid, "dispatchedToIde": dispatched, "media": ui_media})
             return
 
@@ -2060,7 +2616,7 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
 
 
 # ============================================================================
-# 7. KHỞI CHẠY SERVER & IN HƯỚNG DẪN KẾT NỐI TRỰC QUAN
+# 8. KHỞI CHẠY SERVER & LUỒNG WEBSOCKET REALTIME
 # ============================================================================
 
 APP_CONFIG: dict = {}
@@ -2068,7 +2624,7 @@ APP_CONFIG: dict = {}
 
 def main() -> None:
     global APP_CONFIG
-    parser = argparse.ArgumentParser(description="Antigravity Mobile Companion (Self-Host 100% Privacy)")
+    parser = argparse.ArgumentParser(description="Antigravity Mobile Companion (Self-Host + WebSocket Realtime)")
     parser.add_argument("--port", type=int, default=0, help="Cổng lắng nghe (mặc định: 8046, tự chọn cổng trống nếu bận)")
     parser.add_argument("--strict-port", action="store_true", help="Bắt buộc dùng đúng cổng --port, không tự chuyển cổng")
     parser.add_argument("--pin", type=str, default="", help="Mã PIN (4-12 chữ số) bảo vệ truy cập từ điện thoại")
@@ -2091,13 +2647,17 @@ def main() -> None:
     lan_url = f"http://{ips['lan_ip']}:{listen_port}/?pin={pin_code}"
     local_url = f"http://127.0.0.1:{listen_port}/?pin={pin_code}"
 
-    append_security_audit("SERVER_STARTED", "127.0.0.1", f"Khởi động Self-Host Companion trên cổng {listen_port}", "info")
+    append_security_audit("SERVER_STARTED", "127.0.0.1", f"Khởi động Self-Host Companion + WebSocket Realtime trên cổng {listen_port}", "info")
 
-    print("=" * 74)
-    print("  ANTIGRAVITY MOBILE COMPANION v2.0 — SELF-HOSTED (100% DATA PRIVACY)")
-    print("=" * 74)
+    # Khởi chạy luồng theo dõi & đẩy sự kiện WebSocket Realtime (0.55s)
+    threading.Thread(target=_realtime_ws_watcher_loop, daemon=True).start()
+
+    print("=" * 76)
+    print("  ANTIGRAVITY MOBILE COMPANION v2.1 — EXACT ANTIGRAVITY UI + WEBSOCKET")
+    print("=" * 76)
     print(f"  * Máy trạm (Host PC)  : {HOST_NAME}")
     print(f"  * Vùng dữ liệu Local  : {ANTIGRAVITY_DIR}")
+    print(f"  * Đồng bộ Realtime    : WebSocket ws://{ips['lan_ip']}:{listen_port}/ws (0.55s live stream)")
     print(f"  * Mã PIN Bảo Mật      : {pin_code} (Chống Brute-Force: khóa IP sau {MAX_FAILED_ATTEMPTS} lần sai)")
     print(f"  * Mã QR Offline       : Tạo SVG trực tiếp trên máy (Zero Third-Party Leak)")
     print(f"  * Mở trên PC này      : {local_url}")
@@ -2116,9 +2676,8 @@ def main() -> None:
         else:
             print(f"  * Lưu ý Tunnel        : {tun.get('error')}")
     else:
-        print("  * Mẹo 4G/5G           : Bấm nút [QR & Bảo Mật 4G/5G] trên giao diện Web")
-        print("                          hoặc chạy kèm cờ --tunnel để điều khiển khi ra ngoài.")
-    print("=" * 74)
+        print("  * Mẹo 4G/5G           : Bấm nút [Settings] -> [Kết Nối QR & 4G/5G] trên giao diện")
+    print("=" * 76)
 
     bind_host = "127.0.0.1" if args.localhost_only else "0.0.0.0"
     srv = ThreadingHTTPServer((bind_host, listen_port), CompanionRequestHandler)
