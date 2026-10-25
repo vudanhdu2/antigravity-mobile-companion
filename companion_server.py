@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import copy
 import datetime
 import hashlib
@@ -67,6 +68,11 @@ COMPANION_DATA_DIR = ANTIGRAVITY_DIR / "companion_selfhost"
 UPLOADS_DIR = COMPANION_DATA_DIR / "uploads"
 BIN_DIR = COMPANION_DATA_DIR / "bin"
 CONFIG_FILE = COMPANION_DATA_DIR / "config.json"
+CMD_STATE_DB = COMPANION_DATA_DIR / "cmd_state.db"
+
+COMPANION_RUNTIME_VERSION = "2026.10.25-v2.2-hardened"
+CMD_TTL_MS = 180_000          # Hard cap: 3 minutes max command age
+CMD_CLAIM_LEASE_MS = 60_000   # Atomic claim lease: 60 seconds
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 DEFAULT_PORT = int(os.environ.get("AG_COMPANION_PORT", "8046"))
@@ -122,11 +128,27 @@ _projects_cfg_cache: dict = {"at": 0.0, "data": {}}
 _annotations_cache: dict = {"at": 0.0, "data": {}}
 _live_rpc_cache: dict = {"at": 0.0, "summaries": {}, "models": list(DEFAULT_MODELS), "email": "", "tier": ""}
 
-# Quản lý kết nối WebSocket Realtime (RFC 6455)
+# Quản lý kết nối WebSocket Realtime (RFC 6455) & Telemetry
 _ws_lock = threading.Lock()
 _ws_clients: list[dict] = []  # [{"sock": sock, "lock": Lock(), "cid": None, "ip": ip}]
 _last_ov_fingerprint: list[str] = [""]
 _last_conv_fingerprints: dict[str, str] = {}
+_ws_thread_ref: list[threading.Thread | None] = [None]
+_cmd_state_lock = threading.RLock()
+_now_init_ms = int(time.time() * 1000)
+_worker_telemetry: dict[str, int | str | bool] = {
+    "version": COMPANION_RUNTIME_VERSION,
+    "pid": os.getpid(),
+    "started_at_ms": _now_init_ms,
+    "last_ws_loop_at_ms": _now_init_ms,
+    "active_claimed_count": 0,
+    "delivered_count": 0,
+    "failed_count": 0,
+    "expired_count": 0,
+    "cancelled_count": 0,
+    "dedup_hit_count": 0,
+    "last_error": "",
+}
 
 MAX_FAILED_ATTEMPTS = 5
 FAILED_WINDOW_SEC = 300.0
@@ -284,6 +306,7 @@ def _realtime_ws_watcher_loop() -> None:
     """Luồng nền theo dõi thay đổi của Antigravity IDE mỗi 0.55s và đồng bộ tức thì qua WebSocket."""
     while True:
         time.sleep(0.55)
+        _worker_telemetry["last_ws_loop_at_ms"] = int(time.time() * 1000)
         try:
             with _ws_lock:
                 if not _ws_clients:
@@ -1878,6 +1901,432 @@ def stop_cloudflare_quick_tunnel() -> dict:
 
 
 # ============================================================================
+# 6B. BỘ CHỐNG TRỄ LỆNH (TTL GUARD), CHỐNG LẶP (IDEMPOTENCY) & DEEP HEALTH
+# ============================================================================
+
+def _ensure_cmd_state_table() -> None:
+    try:
+        COMPANION_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        with _cmd_state_lock, contextlib.closing(sqlite3.connect(str(CMD_STATE_DB), timeout=5)) as conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ag_companion_cmd_state (
+                    cmd_id TEXT PRIMARY KEY,
+                    action_type TEXT NOT NULL,
+                    payload_sha256 TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    conversation_id TEXT DEFAULT '',
+                    created_at_ms INTEGER NOT NULL,
+                    expires_at_ms INTEGER NOT NULL,
+                    claimed_at_ms INTEGER DEFAULT 0,
+                    completed_at_ms INTEGER DEFAULT 0,
+                    cancelled_at_ms INTEGER DEFAULT 0,
+                    response_json TEXT DEFAULT '',
+                    error_message TEXT DEFAULT ''
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_cmd_state_status_exp ON ag_companion_cmd_state(status, expires_at_ms);")
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _compute_cmd_payload_sha256(action_type: str, body: dict) -> str:
+    raw_media = body.get("media") if isinstance(body.get("media"), list) else []
+    media_digests: list[str] = []
+    for item in raw_media[:20]:
+        if isinstance(item, dict):
+            m_name = str(item.get("name") or "").strip()
+            m_mime = str(item.get("mimeType") or item.get("type") or "").strip()
+            m_data = str(item.get("dataUrl") or item.get("base64") or item.get("data") or "")
+            m_hash = hashlib.sha256(m_data.encode("utf-8", errors="ignore")).hexdigest()[:24]
+            media_digests.append(f"{m_name}:{m_mime}:{len(m_data)}:{m_hash}")
+        else:
+            media_digests.append(str(item)[:64])
+    norm = {
+        "action": str(action_type or "").strip().lower(),
+        "conversationId": str(body.get("conversationId") or "").strip(),
+        "projectId": str(body.get("projectId") or "").strip(),
+        "title": str(body.get("title") or "").strip(),
+        "prompt": str(body.get("prompt") or body.get("text") or "").strip(),
+        "model": str(body.get("model") or "").strip(),
+        "app": str(body.get("app") or body.get("appId") or "").strip().lower(),
+        "mediaDigests": media_digests,
+    }
+    raw = json.dumps(norm, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _get_cmd_effect_checkpoint(cmd_id: str) -> dict:
+    cid_clean = str(cmd_id or "").strip()
+    if not cid_clean:
+        return {}
+    _ensure_cmd_state_table()
+    try:
+        with _cmd_state_lock, contextlib.closing(sqlite3.connect(str(CMD_STATE_DB), timeout=5)) as conn:
+            row = conn.execute(
+                "SELECT conversation_id, response_json FROM ag_companion_cmd_state WHERE cmd_id = ?",
+                (cid_clean,),
+            ).fetchone()
+            if not row:
+                return {}
+            conv_id, resp_json = row
+            parsed = json.loads(resp_json) if resp_json else {}
+            if not isinstance(parsed, dict):
+                parsed = {}
+            if conv_id and not parsed.get("conversationId"):
+                parsed["conversationId"] = str(conv_id)
+            return parsed
+    except Exception:
+        return {}
+
+
+def _save_cmd_effect_checkpoint(cmd_id: str, checkpoint: dict) -> None:
+    cid_clean = str(cmd_id or "").strip()
+    if not cid_clean or not isinstance(checkpoint, dict):
+        return
+    _ensure_cmd_state_table()
+    conv_id = str(checkpoint.get("conversationId") or "").strip()
+    try:
+        with _cmd_state_lock, contextlib.closing(sqlite3.connect(str(CMD_STATE_DB), timeout=5)) as conn:
+            conn.execute(
+                """
+                UPDATE ag_companion_cmd_state
+                SET conversation_id = COALESCE(NULLIF(?, ''), conversation_id),
+                    response_json = ?
+                WHERE cmd_id = ? AND status = 'PROCESSING'
+                """,
+                (conv_id, json.dumps(checkpoint, ensure_ascii=False), cid_clean),
+            )
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _extract_cmd_timestamps(body: dict) -> tuple[int, int]:
+    now_ms = int(time.time() * 1000)
+    raw_created = body.get("createdAtMs") or body.get("clientTimestampMs") or body.get("timestamp")
+    try:
+        created_ms = int(float(raw_created)) if raw_created is not None else now_ms
+        if created_ms < 1_000_000_000_000:
+            created_ms *= 1000
+    except Exception:
+        created_ms = now_ms
+
+    raw_ttl = body.get("ttlMs")
+    try:
+        ttl_ms = max(15_000, min(600_000, int(float(raw_ttl)))) if raw_ttl is not None else CMD_TTL_MS
+    except Exception:
+        ttl_ms = CMD_TTL_MS
+
+    raw_expires = body.get("expiresAtMs")
+    try:
+        expires_ms = int(float(raw_expires)) if raw_expires is not None else (created_ms + ttl_ms)
+        if expires_ms < 1_000_000_000_000:
+            expires_ms *= 1000
+    except Exception:
+        expires_ms = created_ms + ttl_ms
+
+    return created_ms, expires_ms
+
+
+def _cancel_pending_cmd_by_id(cmd_id: str, conversation_id: str = "") -> dict:
+    cid_clean = str(cmd_id or "").strip()
+    if not cid_clean:
+        return {"ok": False, "error": "Missing cmdId"}
+    _ensure_cmd_state_table()
+    now_ms = int(time.time() * 1000)
+    try:
+        with _cmd_state_lock, contextlib.closing(sqlite3.connect(str(CMD_STATE_DB), timeout=5)) as conn:
+            row = conn.execute(
+                "SELECT status, conversation_id FROM ag_companion_cmd_state WHERE cmd_id = ?",
+                (cid_clean,),
+            ).fetchone()
+            if row:
+                cur_status, cur_conv = row
+                if cur_status == "COMPLETED":
+                    return {
+                        "ok": True,
+                        "cmdId": cid_clean,
+                        "status": "ALREADY_COMPLETED",
+                        "conversationId": cur_conv or conversation_id,
+                    }
+                conn.execute(
+                    """
+                    UPDATE ag_companion_cmd_state
+                    SET status = 'CANCELLED', cancelled_at_ms = ?, error_message = 'Cancelled by user/client'
+                    WHERE cmd_id = ?
+                    """,
+                    (now_ms, cid_clean),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO ag_companion_cmd_state
+                    (cmd_id, action_type, payload_sha256, status, conversation_id, created_at_ms, expires_at_ms, cancelled_at_ms, error_message)
+                    VALUES (?, 'cancel_tombstone', '', 'CANCELLED', ?, ?, ?, ?, 'Cancelled before arrival')
+                    """,
+                    (cid_clean, conversation_id, now_ms, now_ms + CMD_TTL_MS, now_ms),
+                )
+            conn.commit()
+    except Exception as e:
+        return {"ok": False, "cmdId": cid_clean, "error": str(e)}
+    return {"ok": True, "cmdId": cid_clean, "status": "CANCELLED", "conversationId": conversation_id}
+
+
+def _execute_with_cmd_idempotency(action_type: str, body: dict, handler_fn) -> tuple[dict, int]:
+    now_ms = int(time.time() * 1000)
+    created_ms, expires_ms = _extract_cmd_timestamps(body)
+    cmd_id = str(body.get("cmdId") or body.get("commandId") or body.get("requestId") or "").strip()
+    payload_sha256 = _compute_cmd_payload_sha256(action_type, body)
+
+    if now_ms > expires_ms:
+        age_sec = round((now_ms - created_ms) / 1000.0, 1)
+        _worker_telemetry["commands_expired_total"] = int(_worker_telemetry.get("commands_expired_total") or 0) + 1
+        err_obj = {
+            "ok": False,
+            "expired": True,
+            "cmdId": cmd_id or None,
+            "error": f"Lệnh đã quá hạn ({age_sec}s > TTL) do nghẽn kết nối trước đó nên bị chặn để tránh tự chạy muộn trên PC.",
+        }
+        if cmd_id:
+            _ensure_cmd_state_table()
+            try:
+                with _cmd_state_lock, contextlib.closing(sqlite3.connect(str(CMD_STATE_DB), timeout=5)) as conn:
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO ag_companion_cmd_state
+                        (cmd_id, action_type, payload_sha256, status, created_at_ms, expires_at_ms, error_message, response_json)
+                        VALUES (?, ?, ?, 'EXPIRED', ?, ?, ?, ?)
+                        """,
+                        (cmd_id, action_type, payload_sha256, created_ms, expires_ms, err_obj["error"], json.dumps(err_obj, ensure_ascii=False)),
+                    )
+                    conn.commit()
+            except Exception:
+                pass
+        return err_obj, 408
+
+    if not cmd_id:
+        res_obj, status_code = handler_fn()
+        if status_code < 400 and isinstance(res_obj, dict) and res_obj.get("ok"):
+            _worker_telemetry["commands_processed_total"] = int(_worker_telemetry.get("commands_processed_total") or 0) + 1
+        else:
+            _worker_telemetry["commands_failed_total"] = int(_worker_telemetry.get("commands_failed_total") or 0) + 1
+        return res_obj, status_code
+
+    _ensure_cmd_state_table()
+    try:
+        with _cmd_state_lock, contextlib.closing(sqlite3.connect(str(CMD_STATE_DB), timeout=5)) as conn:
+            row = conn.execute(
+                """
+                SELECT action_type, payload_sha256, status, claimed_at_ms, response_json, error_message, conversation_id
+                FROM ag_companion_cmd_state WHERE cmd_id = ?
+                """,
+                (cmd_id,),
+            ).fetchone()
+            if row:
+                stored_action, stored_hash, status, claimed_at_ms, resp_json, err_msg, stored_cid = row
+                if status != "CANCELLED" and stored_hash and stored_hash != payload_sha256:
+                    _worker_telemetry["commands_failed_total"] = int(_worker_telemetry.get("commands_failed_total") or 0) + 1
+                    return {
+                        "ok": False,
+                        "cmdId": cmd_id,
+                        "payloadMismatch": True,
+                        "error": f"Xung đột Idempotency: cmdId '{cmd_id}' đã được dùng cho một nội dung lệnh khác ({stored_action}).",
+                    }, 409
+                if status == "CANCELLED":
+                    return {
+                        "ok": False,
+                        "cancelled": True,
+                        "cmdId": cmd_id,
+                        "error": "Lệnh này đã bị hủy trước khi thực thi.",
+                    }, 409
+                if status == "EXPIRED":
+                    return {
+                        "ok": False,
+                        "expired": True,
+                        "cmdId": cmd_id,
+                        "error": err_msg or "Lệnh đã hết hạn TTL.",
+                    }, 408
+                if status == "COMPLETED" and resp_json:
+                    try:
+                        cached = json.loads(resp_json)
+                        cached["deduplicated"] = True
+                        cached["cmdId"] = cmd_id
+                        _worker_telemetry["commands_deduplicated_total"] = int(_worker_telemetry.get("commands_deduplicated_total") or 0) + 1
+                        return cached, 200
+                    except Exception:
+                        pass
+                if status == "PROCESSING":
+                    cp_existing: dict = {}
+                    if resp_json:
+                        try:
+                            cp_existing = json.loads(resp_json) if resp_json else {}
+                        except Exception:
+                            cp_existing = {}
+                    if isinstance(cp_existing, dict) and cp_existing.get("stage") in ("start_intent", "send_intent", "cli_new_intent") and not cp_existing.get("ok"):
+                        if (now_ms - int(claimed_at_ms or 0)) < CMD_CLAIM_LEASE_MS:
+                            return {
+                                "ok": False,
+                                "inProgress": True,
+                                "cmdId": cmd_id,
+                                "conversationId": stored_cid or cp_existing.get("conversationId") or "",
+                                "error": "Lệnh đang được xử lý trên PC, vui lòng đợi phản hồi.",
+                            }, 409
+                        return {
+                            "ok": False,
+                            "ambiguous": True,
+                            "cmdId": cmd_id,
+                            "conversationId": stored_cid or cp_existing.get("conversationId") or "",
+                            "stage": cp_existing.get("stage"),
+                            "error": "Lệnh trước đó đang ở trạng thái chờ xác nhận từ Antigravity IDE (in-doubt). Đã khóa phát lại tự động để chống tạo/gửi trùng 2 lần.",
+                        }, 409
+                    if (now_ms - int(claimed_at_ms or 0)) < CMD_CLAIM_LEASE_MS:
+                        return {
+                            "ok": False,
+                            "inProgress": True,
+                            "cmdId": cmd_id,
+                            "conversationId": stored_cid,
+                            "error": "Lệnh đang được xử lý trên PC, vui lòng đợi giây lát.",
+                        }, 409
+                conn.execute(
+                    """
+                    UPDATE ag_companion_cmd_state
+                    SET action_type = ?, payload_sha256 = ?, status = 'PROCESSING', claimed_at_ms = ?, expires_at_ms = ?
+                    WHERE cmd_id = ?
+                    """,
+                    (action_type, payload_sha256, now_ms, expires_ms, cmd_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO ag_companion_cmd_state
+                    (cmd_id, action_type, payload_sha256, status, created_at_ms, expires_at_ms, claimed_at_ms)
+                    VALUES (?, ?, ?, 'PROCESSING', ?, ?, ?)
+                    """,
+                    (cmd_id, action_type, payload_sha256, created_ms, expires_ms, now_ms),
+                )
+            conn.commit()
+    except Exception:
+        pass
+
+    res_obj, status_code = handler_fn()
+    done_ms = int(time.time() * 1000)
+
+    if isinstance(res_obj, dict):
+        res_obj["cmdId"] = cmd_id
+
+    try:
+        with _cmd_state_lock, contextlib.closing(sqlite3.connect(str(CMD_STATE_DB), timeout=5)) as conn:
+            row_after = conn.execute(
+                "SELECT status FROM ag_companion_cmd_state WHERE cmd_id = ?",
+                (cmd_id,),
+            ).fetchone()
+            if row_after and row_after[0] == "CANCELLED":
+                res_cid = str((res_obj or {}).get("conversationId") or "").strip()
+                if res_cid:
+                    for inst in discover_local_antigravity_instances():
+                        try:
+                            inst.rpc("CancelCascadeInvocation", {"cascadeId": res_cid}, timeout=4)
+                        except Exception:
+                            pass
+                return {
+                    "ok": False,
+                    "cancelled": True,
+                    "cmdId": cmd_id,
+                    "conversationId": res_cid,
+                    "error": "Lệnh đã được thu hồi/hủy ngay khi hoàn tất.",
+                }, 409
+
+            if status_code < 400 and isinstance(res_obj, dict) and res_obj.get("ok"):
+                _worker_telemetry["commands_processed_total"] = int(_worker_telemetry.get("commands_processed_total") or 0) + 1
+                conn.execute(
+                    """
+                    UPDATE ag_companion_cmd_state
+                    SET status = 'COMPLETED',
+                        completed_at_ms = ?,
+                        conversation_id = ?,
+                        response_json = ?
+                    WHERE cmd_id = ?
+                    """,
+                    (
+                        done_ms,
+                        str(res_obj.get("conversationId") or ""),
+                        json.dumps(res_obj, ensure_ascii=False),
+                        cmd_id,
+                    ),
+                )
+            else:
+                _worker_telemetry["commands_failed_total"] = int(_worker_telemetry.get("commands_failed_total") or 0) + 1
+                err_txt = str((res_obj or {}).get("error") or f"HTTP {status_code}")
+                conn.execute(
+                    """
+                    UPDATE ag_companion_cmd_state
+                    SET status = 'FAILED',
+                        completed_at_ms = ?,
+                        error_message = ?,
+                        response_json = ?
+                    WHERE cmd_id = ?
+                    """,
+                    (done_ms, err_txt, json.dumps(res_obj or {}, ensure_ascii=False), cmd_id),
+                )
+            conn.commit()
+    except Exception:
+        pass
+
+    return res_obj, status_code
+
+
+def _build_health_status() -> dict:
+    now_ms = int(time.time() * 1000)
+    instances = discover_local_antigravity_instances()
+    ide_ready = len(instances) > 0
+    ws_t = _ws_thread_ref[0]
+    ws_alive = bool(ws_t is not None and ws_t.is_alive())
+    last_ws_ms = int(_worker_telemetry.get("last_ws_loop_at_ms") or 0)
+    ws_Loop_age_ms = (now_ms - last_ws_ms) if last_ws_ms > 0 else -1
+    ws_healthy = ws_alive and (ws_Loop_age_ms < 15_000)
+    with _ws_lock:
+        ws_count = len(_ws_clients)
+
+    return {
+        "ok": ws_healthy,
+        "status": "ready" if (ws_healthy and ide_ready) else ("degraded_no_ide" if ws_healthy else "unhealthy"),
+        "version": COMPANION_RUNTIME_VERSION,
+        "host": HOST_NAME,
+        "pid": os.getpid(),
+        "uptimeSec": int((now_ms - int(_worker_telemetry.get("started_at_ms") or now_ms)) / 1000),
+        "ideReady": ide_ready,
+        "ideInstancesCount": len(instances),
+        "ideApps": [
+            {
+                "pid": getattr(i, "pid", 0),
+                "port": getattr(i, "https_port", None) or getattr(i, "grpc_port", None) or (i.ports[0] if getattr(i, "ports", None) else 0),
+            }
+            for i in instances
+        ],
+        "workers": {
+            "wsWatcherAlive": ws_alive,
+            "wsWatcherHealthy": ws_healthy,
+            "lastWsLoopAgeMs": ws_Loop_age_ms,
+            "wsClientsConnected": ws_count,
+        },
+        "telemetry": {
+            "commandsProcessed": int(_worker_telemetry.get("commands_processed_total") or 0),
+            "commandsExpired": int(_worker_telemetry.get("commands_expired_total") or 0),
+            "commandsDeduplicated": int(_worker_telemetry.get("commands_deduplicated_total") or 0),
+            "commandsFailed": int(_worker_telemetry.get("commands_failed_total") or 0),
+            "lastRpcOkAtMs": int(_worker_telemetry.get("last_rpc_ok_at_ms") or 0),
+            "lastRpcError": str(_worker_telemetry.get("last_rpc_error") or ""),
+        },
+        "cmdTtlMs": CMD_TTL_MS,
+        "timestamp": now_ms,
+    }
+
+
+# ============================================================================
 # 7. HTTP + WEBSOCKET SERVER BẢO MẬT CAO (CHỐNG BRUTE-FORCE, SESSION TOKEN, SANDBOX)
 # ============================================================================
 
@@ -1887,7 +2336,7 @@ class ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
-    server_version = "AntigravityCompanionSelfHost/2.1"
+    server_version = "AntigravityCompanionSelfHost/2.2"
 
     def log_message(self, fmt: str, *args) -> None:
         return
@@ -2135,6 +2584,11 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
 
         if self._is_lan_blocked():
             self._send_json({"ok": False, "error": "Truy cập qua mạng LAN đang được khóa bởi chủ máy PC."}, 403)
+            return
+
+        if path in ("/health", "/api/ag-companion/health"):
+            h = _build_health_status()
+            self._send_json(h, 200 if h.get("ok") else 503)
             return
 
         # Hỗ trợ nâng cấp kết nối WebSocket Realtime (/ws hoặc /api/ag-companion/ws)
@@ -2399,8 +2853,24 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
             self._send_json({"ok": True, "conversationId": cid, "pinned": pinned})
             return
 
+        if path == "/api/ag-companion/cancel_cmd":
+            cmd_id = str(body.get("cmdId") or body.get("commandId") or "").strip()
+            cid = str(body.get("conversationId") or "").strip()
+            res_cancel = _cancel_pending_cmd_by_id(cmd_id, cid)
+            if cid:
+                for inst in discover_local_antigravity_instances():
+                    try:
+                        inst.rpc("CancelCascadeInvocation", {"cascadeId": cid}, timeout=5)
+                    except Exception:
+                        pass
+            self._send_json(res_cancel, 200 if res_cancel.get("ok") else 400)
+            return
+
         if path == "/api/ag-companion/cancel":
             cid = str(body.get("conversationId") or "").strip()
+            cmd_id = str(body.get("cmdId") or body.get("commandId") or "").strip()
+            if cmd_id:
+                _cancel_pending_cmd_by_id(cmd_id, cid)
             instances = discover_local_antigravity_instances()
             cancelled = False
             for inst in instances:
@@ -2419,166 +2889,196 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if path == "/api/ag-companion/new":
-            prompt = str(body.get("prompt") or body.get("text") or "").strip()
-            title_in = str(body.get("title") or "").strip()
-            media_raw = body.get("media") if isinstance(body.get("media"), list) else []
-            proj_id = str(body.get("projectId") or "").strip()
-            model_raw = str(body.get("model") or "").strip()
-            cli_model = "flash" if "flash" in model_raw.lower() else "pro"
-            if not prompt and not media_raw:
-                self._send_json({"ok": False, "error": "Vui lòng nhập nội dung giao việc hoặc đính kèm ảnh/tài liệu."}, 400)
-                return
+            def _handle_new() -> tuple[dict, int]:
+                cmd_id_local = str(body.get("cmdId") or body.get("commandId") or body.get("requestId") or "").strip()
+                prompt = str(body.get("prompt") or body.get("text") or "").strip()
+                title_in = str(body.get("title") or "").strip()
+                media_raw = body.get("media") if isinstance(body.get("media"), list) else []
+                proj_id = str(body.get("projectId") or "").strip()
+                model_raw = str(body.get("model") or "").strip()
+                cli_model = "flash" if "flash" in model_raw.lower() else "pro"
+                if not prompt and not media_raw:
+                    return {"ok": False, "error": "Vui lòng nhập nội dung giao việc hoặc đính kèm ảnh/tài liệu."}, 400
 
-            instances = discover_local_antigravity_instances(force=True)
-            inst = instances[0] if instances else None
-            real_cid = ""
-            dispatched_to_ide = False
-            auto_title = title_in or (prompt.split("\n")[0][:70] if prompt else "New Conversation")
+                instances = discover_local_antigravity_instances(force=True)
+                inst = instances[0] if instances else None
+                cp = _get_cmd_effect_checkpoint(cmd_id_local) if cmd_id_local else {}
+                real_cid = str(cp.get("conversationId") or "").strip()
+                auto_title = title_in or (prompt.split("\n")[0][:70] if prompt else "New Conversation")
 
-            if inst is not None:
-                eff_proj = proj_id if (proj_id and proj_id not in ("local-workspace", "outside-of-project")) else "e3009192-6136-4652-a8f6-1f1238312ad6"
-                try:
-                    sc = inst.rpc(
-                        "StartCascade",
-                        {
-                            "source": "CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT",
-                            "trajectoryType": "CORTEX_TRAJECTORY_TYPE_CASCADE",
-                            "projectEnvConfig": {"projectId": eff_proj, "defaultProjectEnvironment": {}},
-                        },
-                        timeout=12,
-                    )
-                    real_cid = str((sc or {}).get("cascadeId") or "").strip()
-                except Exception:
-                    real_cid = ""
+                if inst is not None:
+                    eff_proj = proj_id if (proj_id and proj_id not in ("local-workspace", "outside-of-project")) else "e3009192-6136-4652-a8f6-1f1238312ad6"
+                    if not real_cid:
+                        if cmd_id_local:
+                            _save_cmd_effect_checkpoint(cmd_id_local, {"stage": "start_intent"})
+                        try:
+                            sc = inst.rpc(
+                                "StartCascade",
+                                {
+                                    "source": "CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT",
+                                    "trajectoryType": "CORTEX_TRAJECTORY_TYPE_CASCADE",
+                                    "projectEnvConfig": {"projectId": eff_proj, "defaultProjectEnvironment": {}},
+                                },
+                                timeout=12,
+                            )
+                            real_cid = str((sc or {}).get("cascadeId") or "").strip()
+                            if real_cid and cmd_id_local:
+                                _save_cmd_effect_checkpoint(cmd_id_local, {"conversationId": real_cid, "stage": "started"})
+                        except Exception as e:
+                            _worker_telemetry["last_rpc_error"] = f"StartCascade: {e}"
+                            real_cid = ""
 
-                if real_cid:
-                    ui_media, cascade_media, file_notes = save_and_prepare_media(inst, real_cid, media_raw)
-                    full_prompt = prompt or f"Phân tích media đính kèm: {', '.join(m['name'] for m in ui_media)}"
-                    if file_notes:
-                        full_prompt = f"{full_prompt}\n\n[Đính kèm từ Web/Mobile]:\n" + "\n".join(file_notes)
+                    if real_cid:
+                        ui_media, cascade_media, file_notes = save_and_prepare_media(inst, real_cid, media_raw)
+                        full_prompt = prompt or f"Phân tích media đính kèm: {', '.join(m['name'] for m in ui_media)}"
+                        if file_notes:
+                            full_prompt = f"{full_prompt}\n\n[Đính kèm từ Web/Mobile]:\n" + "\n".join(file_notes)
 
-                    now_ep = time.time()
-                    _optimistic_convs[real_cid] = {
-                        "id": real_cid,
-                        "title": auto_title,
-                        "projectId": eff_proj,
-                        "prompt": prompt or "Đính kèm media",
-                        "media": ui_media,
-                        "createdAt": now_ep,
-                    }
-                    _viewed_overrides[real_cid] = now_ep
-                    dispatched_to_ide = True
+                        now_ep = time.time()
+                        _optimistic_convs[real_cid] = {
+                            "id": real_cid,
+                            "title": auto_title,
+                            "projectId": eff_proj,
+                            "prompt": prompt or "Đính kèm media",
+                            "media": ui_media,
+                            "createdAt": now_ep,
+                        }
+                        _viewed_overrides[real_cid] = now_ep
 
-                    def _bg_start_send() -> None:
                         try:
                             inst.rpc("UpdateConversationAnnotations", {"cascadeId": real_cid, "annotations": {"title": auto_title}}, timeout=5)
                         except Exception:
                             pass
-                        cfg_u = get_cached_user_config(inst, real_cid, None, model_id=model_raw)
-                        if cfg_u:
-                            payload_rpc: dict = {"cascadeId": real_cid, "items": [{"text": full_prompt}], "cascadeConfig": cfg_u}
-                            if cascade_media:
-                                payload_rpc["media"] = cascade_media
-                            if inst.rpc("SendUserCascadeMessage", payload_rpc, timeout=25) is not None:
-                                trigger_immediate_ws_sync(real_cid)
-                                return
-                        try:
-                            inst.call_agentapi("send-message", real_cid, full_prompt)
-                        except Exception:
-                            pass
-                        trigger_immediate_ws_sync(real_cid)
 
-                    threading.Thread(target=_bg_start_send, daemon=True).start()
-                    threading.Thread(target=trigger_immediate_ws_sync, args=(real_cid,), daemon=True).start()
-                    self._send_json({"ok": True, "conversationId": real_cid, "title": auto_title, "dispatchedToIde": True, "media": ui_media})
-                    return
+                        dispatched_ok = bool(cp.get("stage") == "sent")
+                        if not dispatched_ok:
+                            if cmd_id_local:
+                                _save_cmd_effect_checkpoint(cmd_id_local, {"conversationId": real_cid, "stage": "send_intent"})
+                            cfg_u = get_cached_user_config(inst, real_cid, None, model_id=model_raw)
+                            if cfg_u:
+                                payload_rpc: dict = {"cascadeId": real_cid, "items": [{"text": full_prompt}], "cascadeConfig": cfg_u}
+                                if cascade_media:
+                                    payload_rpc["media"] = cascade_media
+                                if inst.rpc("SendUserCascadeMessage", payload_rpc, timeout=25) is not None:
+                                    dispatched_ok = True
+                                    _worker_telemetry["last_rpc_ok_at_ms"] = int(time.time() * 1000)
 
-                try:
-                    temp_cid = str(uuid.uuid4())
-                    ui_media, _, file_notes = save_and_prepare_media(inst, temp_cid, media_raw)
-                    full_prompt = prompt or "Phân tích media đính kèm"
-                    if file_notes:
-                        full_prompt = f"{full_prompt}\n\n[Đính kèm từ Web/Mobile]:\n" + "\n".join(file_notes)
-                    res = inst.call_agentapi(
-                        "new-conversation",
-                        f"--model={cli_model}",
-                        full_prompt,
-                        project_id=proj_id if proj_id and proj_id != "local-workspace" else "",
-                    )
-                    new_c = ((res.get("response") or {}).get("newConversation")) or {}
-                    if new_c.get("conversationId"):
-                        real_cid = str(new_c["conversationId"])
-                        dispatched_to_ide = True
+                            if not dispatched_ok:
+                                try:
+                                    cli_res = inst.call_agentapi("send-message", real_cid, full_prompt)
+                                    if cli_res.get("ok") or cli_res.get("returncode") == 0 or cli_res.get("response"):
+                                        dispatched_ok = True
+                                        _worker_telemetry["last_rpc_ok_at_ms"] = int(time.time() * 1000)
+                                except Exception as e:
+                                    _worker_telemetry["last_rpc_error"] = f"send-message: {e}"
+
+                            if dispatched_ok and cmd_id_local:
+                                _save_cmd_effect_checkpoint(cmd_id_local, {"conversationId": real_cid, "stage": "sent"})
+
                         threading.Thread(target=trigger_immediate_ws_sync, args=(real_cid,), daemon=True).start()
-                        self._send_json({"ok": True, "conversationId": real_cid, "title": auto_title, "dispatchedToIde": True, "media": ui_media})
-                        return
-                except Exception:
-                    pass
+                        if not dispatched_ok:
+                            return {
+                                "ok": False,
+                                "conversationId": real_cid,
+                                "title": auto_title,
+                                "dispatchedToIde": False,
+                                "error": "Đã tạo phiên nhưng không thể nạp tin nhắn đầu tiên vào Antigravity IDE (Connect RPC timeout).",
+                            }, 502
+                        return {"ok": True, "conversationId": real_cid, "title": auto_title, "dispatchedToIde": True, "media": ui_media}, 200
 
-            real_cid = str(uuid.uuid4())
-            ui_media, _, _ = save_and_prepare_media(None, real_cid, media_raw)
-            now_ms = int(time.time() * 1000)
-            u_msg: dict = {"id": f"u_{now_ms}", "role": "user", "content": prompt or "Phân tích media đính kèm", "timestamp": now_ms}
-            if ui_media:
-                u_msg["media"] = ui_media
-            proj_cfg = load_projects_config()
-            eff_pid = proj_id or "e3009192-6136-4652-a8f6-1f1238312ad6"
-            eff_pname = (proj_cfg.get(eff_pid) or {}).get("name") or "AG"
-            conv_obj = {
-                "id": real_cid,
-                "title": auto_title,
-                "projectId": eff_pid,
-                "projectName": eff_pname,
-                "isRunning": False,
-                "status": "CASCADE_RUN_STATUS_IDLE",
-                "lastModifiedEpoch": time.time(),
-                "messages": [
-                    u_msg,
-                    {
-                        "id": f"a_{now_ms + 1}",
-                        "role": "assistant",
-                        "content": "Đã lưu yêu cầu trên ổ cứng máy tính của bạn. Hiện chưa phát hiện cửa sổ Antigravity Desktop đang mở — hãy mở ứng dụng Antigravity trên PC và gửi lại nhé!",
-                        "completed": True,
-                        "timestamp": now_ms + 1,
-                    },
-                ],
-            }
-            APP_CONFIG.setdefault("customConvs", {})[real_cid] = conv_obj
-            save_config(APP_CONFIG)
-            threading.Thread(target=trigger_immediate_ws_sync, args=(real_cid,), daemon=True).start()
-            self._send_json({"ok": True, "conversationId": real_cid, "title": auto_title, "dispatchedToIde": False, "media": ui_media})
+                    try:
+                        if cmd_id_local:
+                            _save_cmd_effect_checkpoint(cmd_id_local, {"stage": "cli_new_intent"})
+                        temp_cid = str(uuid.uuid4())
+                        ui_media, _, file_notes = save_and_prepare_media(inst, temp_cid, media_raw)
+                        full_prompt = prompt or "Phân tích media đính kèm"
+                        if file_notes:
+                            full_prompt = f"{full_prompt}\n\n[Đính kèm từ Web/Mobile]:\n" + "\n".join(file_notes)
+                        res = inst.call_agentapi(
+                            "new-conversation",
+                            f"--model={cli_model}",
+                            full_prompt,
+                            project_id=proj_id if proj_id and proj_id != "local-workspace" else "",
+                        )
+                        new_c = ((res.get("response") or {}).get("newConversation")) or {}
+                        if new_c.get("conversationId"):
+                            real_cid = str(new_c["conversationId"])
+                            if cmd_id_local:
+                                _save_cmd_effect_checkpoint(cmd_id_local, {"conversationId": real_cid, "stage": "sent"})
+                            _worker_telemetry["last_rpc_ok_at_ms"] = int(time.time() * 1000)
+                            threading.Thread(target=trigger_immediate_ws_sync, args=(real_cid,), daemon=True).start()
+                            return {"ok": True, "conversationId": real_cid, "title": auto_title, "dispatchedToIde": True, "media": ui_media}, 200
+                    except Exception as e:
+                        _worker_telemetry["last_rpc_error"] = f"new-conversation: {e}"
+
+                real_cid = str(uuid.uuid4())
+                ui_media, _, _ = save_and_prepare_media(None, real_cid, media_raw)
+                now_ms = int(time.time() * 1000)
+                u_msg: dict = {"id": f"u_{now_ms}", "role": "user", "content": prompt or "Phân tích media đính kèm", "timestamp": now_ms}
+                if ui_media:
+                    u_msg["media"] = ui_media
+                proj_cfg = load_projects_config()
+                eff_pid = proj_id or "e3009192-6136-4652-a8f6-1f1238312ad6"
+                eff_pname = (proj_cfg.get(eff_pid) or {}).get("name") or "AG"
+                conv_obj = {
+                    "id": real_cid,
+                    "title": auto_title,
+                    "projectId": eff_pid,
+                    "projectName": eff_pname,
+                    "isRunning": False,
+                    "status": "CASCADE_RUN_STATUS_IDLE",
+                    "lastModifiedEpoch": time.time(),
+                    "messages": [
+                        u_msg,
+                        {
+                            "id": f"a_{now_ms + 1}",
+                            "role": "assistant",
+                            "content": "Đã lưu yêu cầu trên ổ cứng máy tính của bạn. Hiện chưa phát hiện cửa sổ Antigravity Desktop đang mở — hãy mở ứng dụng Antigravity trên PC và gửi lại nhé!",
+                            "completed": True,
+                            "timestamp": now_ms + 1,
+                        },
+                    ],
+                }
+                APP_CONFIG.setdefault("customConvs", {})[real_cid] = conv_obj
+                save_config(APP_CONFIG)
+                threading.Thread(target=trigger_immediate_ws_sync, args=(real_cid,), daemon=True).start()
+                return {"ok": True, "conversationId": real_cid, "title": auto_title, "dispatchedToIde": False, "media": ui_media}, 200
+
+            res_obj, status_code = _execute_with_cmd_idempotency("new", body, _handle_new)
+            self._send_json(res_obj, status_code)
             return
 
         if path == "/api/ag-companion/send":
-            cid = str(body.get("conversationId") or "").strip()
-            text = str(body.get("text") or body.get("prompt") or "").strip()
-            model_raw = str(body.get("model") or "").strip()
-            media_raw = body.get("media") if isinstance(body.get("media"), list) else []
-            if not cid or (not text and not media_raw):
-                self._send_json({"ok": False, "error": "Thiếu mã phiên (conversationId) hoặc nội dung tin nhắn."}, 400)
-                return
+            def _handle_send() -> tuple[dict, int]:
+                cmd_id_local = str(body.get("cmdId") or body.get("commandId") or body.get("requestId") or "").strip()
+                cid = str(body.get("conversationId") or "").strip()
+                text = str(body.get("text") or body.get("prompt") or "").strip()
+                model_raw = str(body.get("model") or "").strip()
+                media_raw = body.get("media") if isinstance(body.get("media"), list) else []
+                if not cid or (not text and not media_raw):
+                    return {"ok": False, "error": "Thiếu mã phiên (conversationId) hoặc nội dung tin nhắn."}, 400
 
-            instances = discover_local_antigravity_instances(force=True)
-            inst = instances[0] if instances else None
-            ui_media, cascade_media, file_notes = save_and_prepare_media(inst, cid, media_raw)
-            full_text = text or f"Phân tích media đính kèm: {', '.join(m['name'] for m in ui_media)}"
-            if file_notes:
-                full_text = f"{full_text}\n\n[Đính kèm từ Web/Mobile]:\n" + "\n".join(file_notes)
+                instances = discover_local_antigravity_instances(force=True)
+                inst = instances[0] if instances else None
+                ui_media, cascade_media, file_notes = save_and_prepare_media(inst, cid, media_raw)
+                full_text = text or f"Phân tích media đính kèm: {', '.join(m['name'] for m in ui_media)}"
+                if file_notes:
+                    full_text = f"{full_text}\n\n[Đính kèm từ Web/Mobile]:\n" + "\n".join(file_notes)
 
-            now_ep = time.time()
-            _optimistic_convs[cid] = {
-                "id": cid,
-                "prompt": text or "Đính kèm media",
-                "media": ui_media,
-                "createdAt": now_ep,
-            }
-            _viewed_overrides[cid] = now_ep
+                now_ep = time.time()
+                _optimistic_convs[cid] = {
+                    "id": cid,
+                    "prompt": text or "Đính kèm media",
+                    "media": ui_media,
+                    "createdAt": now_ep,
+                }
+                _viewed_overrides[cid] = now_ep
 
-            dispatched = False
-            if inst is not None:
-                dispatched = True
-
-                def _bg_send_existing() -> None:
+                cp = _get_cmd_effect_checkpoint(cmd_id_local) if cmd_id_local else {}
+                dispatched = bool(cp.get("stage") == "sent")
+                if inst is not None and not dispatched:
+                    if cmd_id_local:
+                        _save_cmd_effect_checkpoint(cmd_id_local, {"conversationId": cid, "stage": "send_intent"})
                     cfg_u = get_cached_user_config(inst, cid, None, model_id=model_raw)
                     if cfg_u:
                         payload_rpc: dict = {"cascadeId": cid, "items": [{"text": full_text}], "cascadeConfig": cfg_u}
@@ -2589,27 +3089,44 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
                             inst.rpc("LoadTrajectory", {"cascadeId": cid}, timeout=10)
                             res_rpc = inst.rpc("SendUserCascadeMessage", payload_rpc, timeout=25)
                         if res_rpc is not None:
-                            trigger_immediate_ws_sync(cid)
-                            return
-                    try:
-                        inst.call_agentapi("send-message", cid, full_text)
-                    except Exception:
-                        pass
-                    trigger_immediate_ws_sync(cid)
+                            dispatched = True
+                            _worker_telemetry["last_rpc_ok_at_ms"] = int(time.time() * 1000)
 
-                threading.Thread(target=_bg_send_existing, daemon=True).start()
+                    if not dispatched:
+                        try:
+                            cli_res = inst.call_agentapi("send-message", cid, full_text)
+                            if cli_res.get("ok") or cli_res.get("returncode") == 0 or cli_res.get("response"):
+                                dispatched = True
+                                _worker_telemetry["last_rpc_ok_at_ms"] = int(time.time() * 1000)
+                        except Exception as e:
+                            _worker_telemetry["last_rpc_error"] = f"send-message: {e}"
 
-            now_ms = int(now_ep * 1000)
-            u_msg = {"id": f"u_{now_ms}", "role": "user", "content": text or "Đính kèm media", "timestamp": now_ms}
-            if ui_media:
-                u_msg["media"] = ui_media
-            c_conv = APP_CONFIG.setdefault("customConvs", {}).setdefault(cid, {"id": cid, "messages": []})
-            c_conv.setdefault("messages", []).append(u_msg)
-            c_conv["isRunning"] = dispatched
-            c_conv["lastModifiedEpoch"] = now_ep
-            save_config(APP_CONFIG)
-            threading.Thread(target=trigger_immediate_ws_sync, args=(cid,), daemon=True).start()
-            self._send_json({"ok": True, "conversationId": cid, "dispatchedToIde": dispatched, "media": ui_media})
+                    if dispatched and cmd_id_local:
+                        _save_cmd_effect_checkpoint(cmd_id_local, {"conversationId": cid, "stage": "sent"})
+
+                    if not dispatched:
+                        _optimistic_convs.pop(cid, None)
+                        return {
+                            "ok": False,
+                            "conversationId": cid,
+                            "dispatchedToIde": False,
+                            "error": "Không thể chuyển tin nhắn tới Antigravity IDE trên PC (Connect RPC timeout).",
+                        }, 502
+
+                now_ms = int(now_ep * 1000)
+                u_msg = {"id": f"u_{now_ms}", "role": "user", "content": text or "Đính kèm media", "timestamp": now_ms}
+                if ui_media:
+                    u_msg["media"] = ui_media
+                c_conv = APP_CONFIG.setdefault("customConvs", {}).setdefault(cid, {"id": cid, "messages": []})
+                c_conv.setdefault("messages", []).append(u_msg)
+                c_conv["isRunning"] = dispatched
+                c_conv["lastModifiedEpoch"] = now_ep
+                save_config(APP_CONFIG)
+                threading.Thread(target=trigger_immediate_ws_sync, args=(cid,), daemon=True).start()
+                return {"ok": True, "conversationId": cid, "dispatchedToIde": dispatched, "media": ui_media}, 200
+
+            res_obj, status_code = _execute_with_cmd_idempotency("send", body, _handle_send)
+            self._send_json(res_obj, status_code)
             return
 
         self._send_json({"ok": False, "error": "Unsupported endpoint"}, 404)
@@ -2640,6 +3157,7 @@ def main() -> None:
     if args.localhost_only:
         APP_CONFIG["allowLan"] = False
     save_config(APP_CONFIG)
+    _ensure_cmd_state_table()
 
     pin_code = str(APP_CONFIG["pin"])
     ips = get_lan_and_tailscale_ips()
@@ -2650,10 +3168,13 @@ def main() -> None:
     append_security_audit("SERVER_STARTED", "127.0.0.1", f"Khởi động Self-Host Companion + WebSocket Realtime trên cổng {listen_port}", "info")
 
     # Khởi chạy luồng theo dõi & đẩy sự kiện WebSocket Realtime (0.55s)
-    threading.Thread(target=_realtime_ws_watcher_loop, daemon=True).start()
+    ws_thread = threading.Thread(target=_realtime_ws_watcher_loop, daemon=True, name="ag-companion-ws-watcher")
+    _ws_thread_ref[0] = ws_thread
+    _worker_telemetry["last_ws_loop_at_ms"] = int(time.time() * 1000)
+    ws_thread.start()
 
     print("=" * 76)
-    print("  ANTIGRAVITY MOBILE COMPANION v2.1 — EXACT ANTIGRAVITY UI + WEBSOCKET")
+    print("  ANTIGRAVITY MOBILE COMPANION v2.2 — HARDENED SYNC + WEBSOCKET REALTIME")
     print("=" * 76)
     print(f"  * Máy trạm (Host PC)  : {HOST_NAME}")
     print(f"  * Vùng dữ liệu Local  : {ANTIGRAVITY_DIR}")

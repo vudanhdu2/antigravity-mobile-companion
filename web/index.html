@@ -1601,6 +1601,8 @@
       }
     }
 
+    let activePendingCmdId = null;
+
     function handleSubmitOrStop() {
       const isRun = (activeConversation && activeConversation.isRunning) || isSubmitting;
       if (isRun) {
@@ -1625,6 +1627,9 @@
       updateComposerButtonState();
 
       const nowMs = Date.now();
+      const cmdId = `cmd_${nowMs}_${Math.random().toString(36).slice(2, 10)}`;
+      const cmdTtlMs = 45000;
+      activePendingCmdId = cmdId;
       const autoTitle = text ? text.split('\n')[0].slice(0, 70) : 'Media Attachment';
 
       if (activeConversationId && !activeConversationId.startsWith('pending_')) {
@@ -1645,6 +1650,10 @@
           await apiFetch('/api/ag-companion/send', {
             method: 'POST',
             body: JSON.stringify({
+              cmdId: cmdId,
+              createdAtMs: nowMs,
+              ttlMs: cmdTtlMs,
+              expiresAtMs: nowMs + cmdTtlMs,
               conversationId: targetCid,
               text: text,
               media: mediaToSend,
@@ -1652,8 +1661,15 @@
             })
           });
         } catch (e) {
+          try {
+            await apiFetch('/api/ag-companion/cancel_cmd', {
+              method: 'POST',
+              body: JSON.stringify({ cmdId: cmdId, conversationId: targetCid })
+            });
+          } catch (_) {}
           showToast('Lỗi gửi tin nhắn: ' + e.message);
         } finally {
+          if (activePendingCmdId === cmdId) activePendingCmdId = null;
           isSubmitting = false;
           updateComposerButtonState();
           refreshOverview();
@@ -1690,6 +1706,10 @@
         const res = await apiFetch('/api/ag-companion/new', {
           method: 'POST',
           body: JSON.stringify({
+            cmdId: cmdId,
+            createdAtMs: nowMs,
+            ttlMs: cmdTtlMs,
+            expiresAtMs: nowMs + cmdTtlMs,
             projectId: targetProjectId,
             prompt: text,
             title: autoTitle,
@@ -1705,8 +1725,15 @@
           }
         }
       } catch (e) {
+        try {
+          await apiFetch('/api/ag-companion/cancel_cmd', {
+            method: 'POST',
+            body: JSON.stringify({ cmdId: cmdId })
+          });
+        } catch (_) {}
         showToast('Lỗi tạo hội thoại: ' + e.message);
       } finally {
+        if (activePendingCmdId === cmdId) activePendingCmdId = null;
         isSubmitting = false;
         updateComposerButtonState();
         refreshOverview();
@@ -1714,15 +1741,26 @@
     }
 
     async function stopActiveConversation() {
+      const pendingCmd = activePendingCmdId;
+      activePendingCmdId = null;
+      if (pendingCmd) {
+        try {
+          await apiFetch('/api/ag-companion/cancel_cmd', {
+            method: 'POST',
+            body: JSON.stringify({ cmdId: pendingCmd, conversationId: activeConversationId || '' })
+          });
+        } catch (_) {}
+      }
       if (!activeConversationId || activeConversationId.startsWith('pending_')) {
         isSubmitting = false;
         updateComposerButtonState();
+        showToast('Đã hủy lệnh đang chờ');
         return;
       }
       try {
         await apiFetch('/api/ag-companion/cancel', {
           method: 'POST',
-          body: JSON.stringify({ conversationId: activeConversationId })
+          body: JSON.stringify({ conversationId: activeConversationId, cmdId: pendingCmd || '' })
         });
         if (activeConversation) activeConversation.isRunning = false;
         isSubmitting = false;
@@ -1803,14 +1841,14 @@
               </div>
             ` : `
               <div class="h-12 px-3 flex items-center gap-1.5 text-xs text-[#1f1f1f] max-w-[160px] truncate">
-                <span>📎</span>
+                <img src="/icons/cat_prompt_scroll.png" class="w-4 h-4 object-contain shrink-0" alt="" />
                 <span class="truncate">${escapeHtml(att.name)}</span>
               </div>
             `}
             <button
               type="button"
               onclick="removeAttachedMedia(${i})"
-              class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/75 text-white text-[10px] flex items-center justify-center cursor-pointer"
+              class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/75 text-white text-xs flex items-center justify-center cursor-pointer"
             >✕</button>
           </div>
         `;

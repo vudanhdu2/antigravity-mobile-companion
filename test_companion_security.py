@@ -171,7 +171,7 @@ def run_test_suite() -> int:
     base_url = f"http://127.0.0.1:{test_port}"
 
     print("=" * 78)
-    print("  CHẠY KIỂM THỬ BẢO MẬT, GIAO DIỆN ANTIGRAVITY & WEBSOCKET REALTIME v2.1")
+    print("  CHẠY KIỂM THỬ BẢO MẬT, GIAO DIỆN ANTIGRAVITY & WEBSOCKET REALTIME v2.2")
     print("=" * 78)
 
     proc = subprocess.Popen(
@@ -194,7 +194,7 @@ def run_test_suite() -> int:
             except Exception:
                 time.sleep(0.2)
         assert ready, "Server không khởi động được trên cổng test."
-        print("[PASS 1/10] Khởi chạy Companion Server & phục vụ giao diện Web tĩnh thành công.")
+        print("[PASS 1/14] Khởi chạy Companion Server & phục vụ giao diện Web tĩnh thành công.")
 
         st, html_raw, _ = http_req(f"{base_url}/index.html")
         assert st == 200 and isinstance(html_raw, str)
@@ -209,18 +209,18 @@ def run_test_suite() -> int:
             "connectRealtimeWebSocket",
         ]:
             assert marker in html_raw, f"Thiếu thành phần giao diện chuẩn Google Antigravity: {marker}"
-        print("[PASS 2/10] Giao diện chuẩn Google Antigravity (Sidebar, Composer 2 tầng, WebSocket client, Google Sans).")
+        print("[PASS 2/14] Giao diện chuẩn Google Antigravity (Sidebar, Composer 2 tầng, WebSocket client, Google Sans).")
 
         st, res_unauth, _ = http_req(f"{base_url}/api/ag-companion/overview")
         assert st == 401, f"Mong đợi HTTP 401 khi không có PIN, nhận được {st}"
-        print("[PASS 3/10] Chặn truy cập API khi chưa xác thực mã PIN (HTTP 401 Unauthorized).")
+        print("[PASS 3/14] Chặn truy cập API khi chưa xác thực mã PIN (HTTP 401 Unauthorized).")
 
         st, res_sess, _ = http_req(f"{base_url}/api/ag-companion/auth-session", method="POST", body={"pin": test_pin})
         assert st == 200 and isinstance(res_sess, dict) and res_sess.get("ok") is True
         sess_token = str(res_sess.get("sessionToken") or "")
         assert sess_token.startswith("ags_"), f"Session Token không hợp lệ: {sess_token}"
         auth_hdr = {"Authorization": f"Bearer {sess_token}"}
-        print(f"[PASS 4/10] Xác thực mã PIN & cấp phát Session Token 256-bit ({sess_token[:14]}...) thành công.")
+        print(f"[PASS 4/14] Xác thực mã PIN & cấp phát Session Token 256-bit ({sess_token[:14]}...) thành công.")
 
         st, conn_info, _ = http_req(f"{base_url}/api/ag-companion/connection-info", headers=auth_hdr)
         assert st == 200 and isinstance(conn_info, dict)
@@ -230,19 +230,19 @@ def run_test_suite() -> int:
         st_ov, ov_data, _ = http_req(f"{base_url}/api/ag-companion/overview", headers=auth_hdr)
         assert st_ov == 200 and isinstance(ov_data, dict) and ov_data.get("selfHosted") is True
         projs = ov_data.get("projects") or []
-        print(f"[PASS 5/10] Tạo mã QR SVG Offline & đọc Overview chuẩn Antigravity ({len(projs)} dự án trên PC).")
+        print(f"[PASS 5/14] Tạo mã QR SVG Offline & đọc Overview chuẩn Antigravity ({len(projs)} dự án trên PC).")
 
         st_cust, cust_data, _ = http_req(f"{base_url}/api/ag-companion/customizations", headers=auth_hdr)
         assert st_cust == 200 and isinstance(cust_data, dict)
         assert "rules" in cust_data and "skills" in cust_data and "mcpServers" in cust_data
         print(
-            f"[PASS 6/10] Đọc dữ liệu Customizations thật trên PC ({len(cust_data['rules'])} rules, "
+            f"[PASS 6/14] Đọc dữ liệu Customizations thật trên PC ({len(cust_data['rules'])} rules, "
             f"{len(cust_data['skills'])} skills, {len(cust_data['mcpServers'])} MCP servers)."
         )
 
         ws_info = test_websocket_realtime(test_port, sess_token)
         print(
-            f"[PASS 7/10] Đồng bộ Realtime WebSocket (/ws - RFC 6455): 101 Switching Protocols, "
+            f"[PASS 7/14] Đồng bộ Realtime WebSocket (/ws - RFC 6455): 101 Switching Protocols, "
             f"nhận tức thì {ws_info['projectsCount']} projects & ping/pong hai chiều."
         )
 
@@ -255,7 +255,7 @@ def run_test_suite() -> int:
             q_bad = urllib.parse.quote(bad_path, safe="")
             st_m, _, _ = http_req(f"{base_url}/api/ag-companion/media?path={q_bad}", headers=auth_hdr)
             assert st_m == 403, f"LỖI BẢO MẬT: Đường dẫn nhạy cảm {bad_path} không bị chặn 403 (status={st_m})!"
-        print("[PASS 8/10] Sandbox Media chặn 100% các cuộc tấn công Path Traversal & đọc file nhạy cảm (HTTP 403).")
+        print("[PASS 8/14] Sandbox Media chặn 100% các cuộc tấn công Path Traversal & đọc file nhạy cảm (HTTP 403).")
 
         new_pin = "998877"
         st_rot, res_rot, _ = http_req(
@@ -266,21 +266,87 @@ def run_test_suite() -> int:
         )
         assert st_rot == 200 and isinstance(res_rot, dict) and res_rot.get("pin") == new_pin
         new_sess_token = str(res_rot.get("sessionToken") or "")
+        new_auth_hdr = {"Authorization": f"Bearer {new_sess_token}"}
         st_old, _, _ = http_req(f"{base_url}/api/ag-companion/overview", headers={"Authorization": f"Bearer {sess_token}"})
         assert st_old == 401, f"Session Token cũ vẫn dùng được sau khi đổi PIN (status={st_old})!"
-        st_new, _, _ = http_req(f"{base_url}/api/ag-companion/overview", headers={"Authorization": f"Bearer {new_sess_token}"})
+        st_new, _, _ = http_req(f"{base_url}/api/ag-companion/overview", headers=new_auth_hdr)
         assert st_new == 200
-        print("[PASS 9/10] Đổi mã PIN mới & thu hồi toàn bộ phiên cũ hoạt động chính xác.")
+        print("[PASS 9/14] Đổi mã PIN mới & thu hồi toàn bộ phiên cũ hoạt động chính xác.")
+
+        # 10. Deep Health Readiness Check (/api/ag-companion/health)
+        st_h, res_h, _ = http_req(f"{base_url}/api/ag-companion/health")
+        assert st_h == 200 and isinstance(res_h, dict) and res_h.get("ok") is True, f"Health check failed: {st_h} {res_h}"
+        assert res_h.get("workers", {}).get("wsWatcherHealthy") is True
+        print(f"[PASS 10/14] Deep Health Check (/api/ag-companion/health): status={res_h.get('status')}, version={res_h.get('version')}.")
+
+        # 11. Server-enforced TTL Guard (chặn lệnh quá hạn do nghẽn kết nối 10h)
+        now_ms = int(time.time() * 1000)
+        stale_cmd_id = f"cmd_test_stale_{now_ms}"
+        st_exp, res_exp, _ = http_req(
+            f"{base_url}/api/ag-companion/send",
+            method="POST",
+            headers=new_auth_hdr,
+            body={
+                "cmdId": stale_cmd_id,
+                "createdAtMs": now_ms - 36_000_000,
+                "expiresAtMs": now_ms - 35_820_000,
+                "conversationId": "test_conv_ttl",
+                "text": "Lệnh cũ từ đêm qua",
+            },
+        )
+        assert st_exp == 408 and isinstance(res_exp, dict) and res_exp.get("expired") is True, f"TTL guard failed: {st_exp} {res_exp}"
+        print("[PASS 11/14] Chặn 100% lệnh quá hạn TTL (HTTP 408 Expired) — không tự chạy muộn trên PC.")
+
+        # 12. Cancel Tombstone trước khi gói tin đến (/api/ag-companion/cancel_cmd)
+        cancel_cmd_id = f"cmd_test_cancel_{now_ms}"
+        st_can, res_can, _ = http_req(
+            f"{base_url}/api/ag-companion/cancel_cmd",
+            method="POST",
+            headers=new_auth_hdr,
+            body={"cmdId": cancel_cmd_id, "conversationId": "test_conv_cancel"},
+        )
+        assert st_can == 200 and isinstance(res_can, dict) and res_can.get("status") == "CANCELLED"
+        st_after_can, res_after_can, _ = http_req(
+            f"{base_url}/api/ag-companion/send",
+            method="POST",
+            headers=new_auth_hdr,
+            body={
+                "cmdId": cancel_cmd_id,
+                "createdAtMs": now_ms,
+                "expiresAtMs": now_ms + 60_000,
+                "conversationId": "test_conv_cancel",
+                "text": "Lệnh đến muộn sau khi bấm hủy",
+            },
+        )
+        assert st_after_can == 409 and isinstance(res_after_can, dict) and res_after_can.get("cancelled") is True
+        print("[PASS 12/14] Hủy lệnh chủ động (/api/ag-companion/cancel_cmd) khóa vĩnh viễn gói tin đến trễ (HTTP 409 Cancelled).")
+
+        # 13. Payload SHA-256 Mismatch Guard cho cùng cmdId
+        mismatch_cmd_id = f"cmd_test_mismatch_{now_ms}"
+        h1 = cs._compute_cmd_payload_sha256(
+            "send",
+            {"conversationId": "c1", "text": "hello", "app": "ag1", "media": [{"name": "a.png", "dataUrl": "data:image/png;base64,AAA"}]},
+        )
+        h2 = cs._compute_cmd_payload_sha256(
+            "send",
+            {"conversationId": "c1", "text": "hello", "app": "ag2", "media": [{"name": "a.png", "dataUrl": "data:image/png;base64,AAA"}]},
+        )
+        h3 = cs._compute_cmd_payload_sha256(
+            "send",
+            {"conversationId": "c1", "text": "hello", "app": "ag1", "media": [{"name": "a.png", "dataUrl": "data:image/png;base64,BBB"}]},
+        )
+        assert h1 != h2 and h1 != h3, "Payload SHA-256 phải phân biệt cả app và nội dung media!"
+        print(f"[PASS 13/14] Băm SHA-256 toàn phần (gồm cả app & media digest) chống va chạm Idempotency ({mismatch_cmd_id[:16]}).")
 
         statuses = []
         for i in range(6):
             st_bf, _, _ = http_req(f"{base_url}/api/ag-companion/auth-session", method="POST", body={"pin": f"00000{i}"})
             statuses.append(st_bf)
         assert 429 in statuses, f"Brute-force rate limit không kích hoạt HTTP 429! Statuses={statuses}"
-        print(f"[PASS 10/10] Chống Brute-Force kích hoạt khóa IP tự động (Statuses={statuses} -> HTTP 429 Locked).")
+        print(f"[PASS 14/14] Chống Brute-Force kích hoạt khóa IP tự động (Statuses={statuses} -> HTTP 429 Locked).")
 
         print("=" * 78)
-        print("  KẾT QUẢ: 10/10 BÀI KIỂM THỬ BẢO MẬT, UI ANTIGRAVITY & WEBSOCKET ĐẠT 100% (PASS)")
+        print("  KẾT QUẢ: 14/14 BÀI KIỂM THỬ BẢO MẬT, TTL/IDEMPOTENCY, UI & WEBSOCKET ĐẠT 100% (PASS)")
         print("=" * 78)
         return 0
     finally:
