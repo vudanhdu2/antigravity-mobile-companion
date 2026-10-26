@@ -338,15 +338,53 @@ def run_test_suite() -> int:
         assert h1 != h2 and h1 != h3, "Payload SHA-256 phải phân biệt cả app và nội dung media!"
         print(f"[PASS 13/14] Băm SHA-256 toàn phần (gồm cả app & media digest) chống va chạm Idempotency ({mismatch_cmd_id[:16]}).")
 
+        # 14. Kiểm thử Multi-User PC Compatibility (primary_pid, auto-reset isRunning & model guard)
+        fake_proj_cfg = {
+            "member-proj-01": {
+                "id": "member-proj-01",
+                "name": "MemberProject",
+                "folderUri": "file:///C:/Projects/MemberProject",
+                "folderPath": r"C:\Projects\MemberProject",
+            },
+            "default-cli-project": {
+                "id": "default-cli-project",
+                "name": "CLI Project",
+                "folderUri": "",
+                "folderPath": str(Path.home()),
+            },
+        }
+        prim = cs.get_primary_project_info(fake_proj_cfg)
+        assert prim["id"] != "e3009192-6136-4652-a8f6-1f1238312ad6", "Không được hardcode UUID của máy tác giả khi máy thành viên không có!"
+        fake_cfg = {
+            "pinned": {},
+            "customConvs": {
+                "conv_stuck_test": {
+                    "id": "conv_stuck_test",
+                    "title": "Test Stuck Stop",
+                    "projectId": "outside-of-project",
+                    "isRunning": True,
+                    "lastModifiedEpoch": time.time() - 5,
+                    "messages": [
+                        {"id": "u_1", "role": "user", "content": "hi", "timestamp": 1000},
+                        {"id": "a_2", "role": "assistant", "content": "done", "completed": True, "toolCalls": [], "timestamp": 2000},
+                    ],
+                }
+            },
+        }
+        detail_fixed = cs.read_local_conversation_detail("conv_stuck_test", fake_cfg)
+        assert detail_fixed["isRunning"] is False, "Phải tự động hạ isRunning=False khi assistant đã trả lời xong (completed=True)!"
+        assert detail_fixed["projectId"] != "outside-of-project", "Phải ánh xạ outside-of-project về primary_pid!"
+        print("[PASS 14/15] Multi-User PC Fix: Tự động nhận diện primary_pid, hiện hội thoại ngoài project & tự nhả nút Stop khi AI trả lời xong.")
+
         statuses = []
         for i in range(6):
             st_bf, _, _ = http_req(f"{base_url}/api/ag-companion/auth-session", method="POST", body={"pin": f"00000{i}"})
             statuses.append(st_bf)
         assert 429 in statuses, f"Brute-force rate limit không kích hoạt HTTP 429! Statuses={statuses}"
-        print(f"[PASS 14/14] Chống Brute-Force kích hoạt khóa IP tự động (Statuses={statuses} -> HTTP 429 Locked).")
+        print(f"[PASS 15/15] Chống Brute-Force kích hoạt khóa IP tự động (Statuses={statuses} -> HTTP 429 Locked).")
 
         print("=" * 78)
-        print("  KẾT QUẢ: 14/14 BÀI KIỂM THỬ BẢO MẬT, TTL/IDEMPOTENCY, UI & WEBSOCKET ĐẠT 100% (PASS)")
+        print("  KẾT QUẢ: 15/15 BÀI KIỂM THỬ BẢO MẬT, MULTI-USER, TTL/IDEMPOTENCY & WEBSOCKET ĐẠT 100% (PASS)")
         print("=" * 78)
         return 0
     finally:

@@ -64,19 +64,20 @@ CONV_DIR = ANTIGRAVITY_DIR / "conversations"
 BRAIN_DIR = ANTIGRAVITY_DIR / "brain"
 ANNOTATIONS_DIR = ANTIGRAVITY_DIR / "annotations"
 PROJECTS_DIR = HOME / ".gemini" / "config" / "projects"
+ALT_PROJECTS_DIR = ANTIGRAVITY_DIR / "projects"
 COMPANION_DATA_DIR = ANTIGRAVITY_DIR / "companion_selfhost"
 UPLOADS_DIR = COMPANION_DATA_DIR / "uploads"
 BIN_DIR = COMPANION_DATA_DIR / "bin"
 CONFIG_FILE = COMPANION_DATA_DIR / "config.json"
 CMD_STATE_DB = COMPANION_DATA_DIR / "cmd_state.db"
 
-COMPANION_RUNTIME_VERSION = "2026.10.25-v2.2-hardened"
+COMPANION_RUNTIME_VERSION = "2026.10.26-v2.2.1-multiuser-fix"
 CMD_TTL_MS = 180_000          # Hard cap: 3 minutes max command age
 CMD_CLAIM_LEASE_MS = 60_000   # Atomic claim lease: 60 seconds
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 DEFAULT_PORT = int(os.environ.get("AG_COMPANION_PORT", "8046"))
-HOST_NAME = os.environ.get("AG_COMPANION_HOSTNAME") or "vudanhdu-cosmic-spark"
+HOST_NAME = os.environ.get("AG_COMPANION_HOSTNAME") or socket.gethostname() or "antigravity-pc"
 SERVICE = "/exa.language_server_pb.LanguageServerService/"
 ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 AG_SETTLED = (3, 4, 5, 6, 7, 12)
@@ -870,7 +871,13 @@ def get_cached_user_config(
         return None
     cfg = copy.deepcopy(base_cfg)
     if isinstance(cfg.get("plannerConfig"), dict) and model_id and model_id.startswith("MODEL_"):
-        cfg["plannerConfig"]["planModel"] = model_id
+        known_models = {
+            str(m.get("id") or "")
+            for m in (_live_rpc_cache.get("models") or DEFAULT_MODELS)
+            if isinstance(m, dict) and m.get("id")
+        }
+        if not known_models or model_id in known_models:
+            cfg["plannerConfig"]["planModel"] = model_id
     return cfg
 
 
@@ -1042,29 +1049,45 @@ def load_annotations_map() -> dict[str, dict]:
 
 
 def load_projects_config() -> dict[str, dict]:
-    """Đọc ~/.gemini/config/projects/*.json để hiển thị đúng tên Project chuẩn Antigravity (AG, CLI Project, ...)."""
+    """Đọc ~/.gemini/config/projects/*.json và ~/.gemini/antigravity/projects/*.json để hiển thị đúng tên Project trên mọi máy PC."""
     now = time.time()
     if _projects_cfg_cache["data"] and (now - _projects_cfg_cache["at"]) < 25.0:
         return _projects_cfg_cache["data"]
     out: dict[str, dict] = {}
-    if PROJECTS_DIR.is_dir():
-        for p in PROJECTS_DIR.glob("*.json"):
+    for p_dir in (ALT_PROJECTS_DIR, PROJECTS_DIR):
+        if not p_dir.is_dir():
+            continue
+        for p in sorted(p_dir.glob("*.json")):
             try:
                 d = json.loads(p.read_text(encoding="utf-8", errors="replace"))
             except Exception:
                 continue
-            pid = str(d.get("id") or p.stem)
-            name = str(d.get("name") or pid)
-            folder_uri = ""
+            pid = str(d.get("id") or p.stem).strip()
+            if not pid or pid == "outside-of-project":
+                continue
+            name = str(d.get("name") or pid).strip()
+            folder_uri = str(d.get("folderUri") or "").strip()
             resources = (d.get("projectResources") or {}).get("resources") or []
-            if resources and isinstance(resources[0], dict):
+            if not folder_uri and resources and isinstance(resources[0], dict):
                 r0 = resources[0]
-                folder_uri = str(r0.get("folderUri") or (r0.get("gitFolder") or {}).get("folderUri") or "")
+                folder_uri = str(r0.get("folderUri") or (r0.get("gitFolder") or {}).get("folderUri") or "").strip()
+            if not folder_uri:
+                raw_paths = d.get("paths") or d.get("workspaceUris") or []
+                if isinstance(raw_paths, list) and raw_paths:
+                    first_p = str(raw_paths[0] or "").strip()
+                    if first_p.startswith("file:"):
+                        folder_uri = first_p
+                    elif first_p:
+                        try:
+                            folder_uri = Path(first_p).resolve().as_uri()
+                        except Exception:
+                            pass
+            folder_path = uri_to_path(folder_uri) if folder_uri else str(d.get("folderPath") or "")
             out[pid] = {
                 "id": pid,
                 "name": name,
                 "folderUri": folder_uri,
-                "folderPath": uri_to_path(folder_uri) if folder_uri else "",
+                "folderPath": folder_path,
             }
     out.setdefault("default-cli-project", {
         "id": "default-cli-project",
@@ -1075,6 +1098,73 @@ def load_projects_config() -> dict[str, dict]:
     _projects_cfg_cache["at"] = now
     _projects_cfg_cache["data"] = out
     return out
+
+
+def get_primary_project_info(proj_cfg: dict[str, dict] | None = None) -> dict:
+    """Xác định project chính (primary_pid & folderUri) của máy người dùng hiện tại, không hardcode UUID của máy tác giả."""
+    cfg_map = proj_cfg if isinstance(proj_cfg, dict) else load_projects_config()
+    author_default = "e3009192-6136-4652-a8f6-1f1238312ad6"
+    if author_default in cfg_map and cfg_map[author_default].get("folderUri"):
+        return cfg_map[author_default]
+
+    synthesized_from_db: dict | None = None
+    # Ưu tiên project có trong cfg_map trùng với phiên làm việc gần nhất trong conversation_summaries.db
+    if SUMMARIES_DB.exists():
+        try:
+            with sqlite3.connect(SUMMARIES_DB.resolve().as_uri() + "?mode=ro", uri=True, timeout=2) as con:
+                recent_rows = con.execute(
+                    """
+                    SELECT project_id, workspace_uris
+                    FROM conversation_summaries
+                    WHERE nesting_depth = 0 AND killed = 0
+                    ORDER BY last_modified_time DESC
+                    LIMIT 25
+                    """
+                ).fetchall()
+            for r_pid, r_uris_str in recent_rows:
+                clean_pid = str(r_pid or "").strip()
+                if clean_pid and clean_pid not in ("outside-of-project", "default-cli-project") and clean_pid in cfg_map:
+                    return cfg_map[clean_pid]
+                try:
+                    uris = json.loads(r_uris_str or "[]")
+                except Exception:
+                    uris = []
+                if uris and isinstance(uris[0], str) and uris[0].strip():
+                    u0 = uris[0].strip()
+                    p0 = uri_to_path(u0)
+                    for cand in cfg_map.values():
+                        if cand.get("id") in ("default-cli-project", "outside-of-project"):
+                            continue
+                        if (cand.get("folderUri") and cand["folderUri"].rstrip("/") == u0.rstrip("/")) or (
+                            cand.get("folderPath") and p0 and Path(cand["folderPath"]) == Path(p0)
+                        ):
+                            return cand
+                    if synthesized_from_db is None:
+                        folder_name = Path(p0).name if p0 else "Workspace"
+                        synthesized_id = clean_pid if (clean_pid and clean_pid != "outside-of-project") else f"ws-{folder_name.lower()}"
+                        synthesized_from_db = {
+                            "id": synthesized_id,
+                            "name": folder_name or "Workspace",
+                            "folderUri": u0,
+                            "folderPath": p0 or str(HOME),
+                        }
+        except Exception:
+            pass
+
+    for pid, info in cfg_map.items():
+        if pid not in ("default-cli-project", "outside-of-project") and info.get("folderUri"):
+            return info
+    for pid, info in cfg_map.items():
+        if pid not in ("default-cli-project", "outside-of-project"):
+            return info
+    if synthesized_from_db is not None:
+        return synthesized_from_db
+    return cfg_map.get("default-cli-project") or {
+        "id": "default-cli-project",
+        "name": "CLI Project",
+        "folderUri": "",
+        "folderPath": str(HOME),
+    }
 
 
 def discover_local_customizations() -> dict:
@@ -1214,21 +1304,28 @@ def build_local_overview(cfg: dict) -> dict:
     account_email = str(_live_rpc_cache.get("email") or "")
     account_tier = str(_live_rpc_cache.get("tier") or "")
 
-    preferred_order = [
-        "e3009192-6136-4652-a8f6-1f1238312ad6",  # AG
-        "default-cli-project",                    # CLI Project
-        "6dafd2cc-8835-48d1-ac12-b0b75c1a904c",  # Bàn Antigravity _ Luyenco
-        "d566b749-893d-4391-a6c9-284baa82fae2",  # VŨ DANH DỰ ANTIGRAVITY
-        "4352ca4c-e63a-451a-a883-adf55240e192",  # VU DANH DU BUSINESSS
-        "5a0a5a50-ac74-4241-893c-c3b17412801d",  # VŨ DANH DỰ APP
-    ]
+    primary_proj = get_primary_project_info(proj_cfg)
+    primary_pid = str(primary_proj.get("id") or "default-cli-project")
+    if primary_pid not in proj_cfg:
+        proj_cfg[primary_pid] = primary_proj
+
+    preferred_order: list[str] = []
+    for cand_pid in [
+        primary_pid,
+        "e3009192-6136-4652-a8f6-1f1238312ad6",
+        "default-cli-project",
+        *list(proj_cfg.keys()),
+    ]:
+        if cand_pid and cand_pid != "outside-of-project" and cand_pid not in preferred_order:
+            preferred_order.append(cand_pid)
+
     projects_map: dict[str, dict] = {}
     for pid in preferred_order:
         if pid in proj_cfg:
             projects_map[pid] = {
                 "id": pid,
                 "name": proj_cfg[pid]["name"],
-                "folderPath": proj_cfg[pid]["folderPath"],
+                "folderPath": proj_cfg[pid].get("folderPath") or str(HOME),
                 "totalCount": 0,
                 "conversations": [],
             }
@@ -1269,9 +1366,25 @@ def build_local_overview(cfg: dict) -> dict:
         pid = str(project_id or "").strip()
         if not pid:
             live_meta = live.get("trajectoryMetadata") or {}
-            pid = str(live_meta.get("projectId") or "outside-of-project")
-        if pid == "outside-of-project":
-            continue
+            pid = str(live_meta.get("projectId") or "").strip()
+        if not pid or pid == "outside-of-project":
+            matched_pid = ""
+            try:
+                uris = json.loads(ws_uris_str or "[]")
+                if uris and isinstance(uris[0], str):
+                    u0 = uris[0].strip().rstrip("/")
+                    p0 = uri_to_path(u0)
+                    for cand_id, cand_info in proj_cfg.items():
+                        if cand_id in ("default-cli-project", "outside-of-project"):
+                            continue
+                        c_uri = str(cand_info.get("folderUri") or "").rstrip("/")
+                        c_path = str(cand_info.get("folderPath") or "")
+                        if (c_uri and c_uri == u0) or (c_path and p0 and Path(c_path) == Path(p0)):
+                            matched_pid = cand_id
+                            break
+            except Exception:
+                pass
+            pid = matched_pid or primary_pid
 
         p_info = proj_cfg.get(pid)
         if not p_info:
@@ -1367,8 +1480,10 @@ def build_local_overview(cfg: dict) -> dict:
     for cid, c_conv in custom_convs.items():
         if cid in seen_cids or not isinstance(c_conv, dict):
             continue
-        pid = str(c_conv.get("projectId") or "e3009192-6136-4652-a8f6-1f1238312ad6")
-        p_info = proj_cfg.get(pid) or {"id": pid, "name": str(c_conv.get("projectName") or "AG"), "folderPath": str(HOME)}
+        pid = str(c_conv.get("projectId") or primary_pid)
+        if pid == "outside-of-project" or pid not in proj_cfg:
+            pid = primary_pid
+        p_info = proj_cfg.get(pid) or {"id": pid, "name": str(c_conv.get("projectName") or primary_proj.get("name") or "Workspace"), "folderPath": str(primary_proj.get("folderPath") or HOME)}
         proj_name = p_info["name"]
         mod_epoch = float(c_conv.get("lastModifiedEpoch") or now)
         is_pinned = bool(pinned_map.get(cid, c_conv.get("pinned", False)))
@@ -1403,16 +1518,16 @@ def build_local_overview(cfg: dict) -> dict:
     for p in projects_map.values():
         p["conversations"].sort(key=lambda x: -x["lastModifiedEpoch"])
 
-    pinned_items.sort(key=lambda x: (0 if x["projectName"] == "AG" else 1, -x["lastModifiedEpoch"]))
+    pinned_items.sort(key=lambda x: (0 if x["projectId"] == primary_pid else 1, -x["lastModifiedEpoch"]))
 
     projects_out = [
         p for p in projects_map.values() if p["totalCount"] > 0 or p["id"] in preferred_order[:2]
     ]
     if not projects_out:
         projects_out.append({
-            "id": "e3009192-6136-4652-a8f6-1f1238312ad6",
-            "name": "AG",
-            "folderPath": str(HOME / "Documents" / "AG"),
+            "id": primary_pid,
+            "name": str(primary_proj.get("name") or "Workspace"),
+            "folderPath": str(primary_proj.get("folderPath") or HOME),
             "totalCount": 0,
             "conversations": [],
         })
@@ -1642,6 +1757,9 @@ def read_local_conversation_detail(cid: str, cfg: dict, limit_steps: int = 180) 
             messages.append(opt_msg)
             any_running_step = True
 
+    primary_proj = get_primary_project_info(proj_cfg)
+    primary_pid = str(primary_proj.get("id") or "default-cli-project")
+
     live_s = (_live_rpc_cache.get("summaries") or {}).get(cid) or {}
     title = str(
         live_s.get("summary")
@@ -1649,7 +1767,7 @@ def read_local_conversation_detail(cid: str, cfg: dict, limit_steps: int = 180) 
         or saved_custom.get("title")
         or ""
     )
-    proj_id = str(saved_custom.get("projectId") or "e3009192-6136-4652-a8f6-1f1238312ad6")
+    proj_id = str(saved_custom.get("projectId") or primary_pid)
     status_db = str(live_s.get("status") or "")
     not_idle_db = 0
     if SUMMARIES_DB.exists():
@@ -1661,21 +1779,45 @@ def read_local_conversation_detail(cid: str, cfg: dict, limit_steps: int = 180) 
                 ).fetchone()
                 if row:
                     title = title or str(row[0] or "")
-                    proj_id = str(row[1] or proj_id)
+                    if row[1] and str(row[1]).strip() and str(row[1]).strip() != "outside-of-project":
+                        proj_id = str(row[1]).strip()
                     status_db = status_db or str(row[2] or "")
                     not_idle_db = int(row[3] or 0)
         except Exception:
             pass
 
-    p_name = (proj_cfg.get(proj_id) or {}).get("name") or str(saved_custom.get("projectName") or "AG")
+    if not proj_id or proj_id == "outside-of-project":
+        proj_id = primary_pid
+    p_name = (proj_cfg.get(proj_id) or {}).get("name") or str(saved_custom.get("projectName") or primary_proj.get("name") or "Workspace")
+
+    last_msg = messages[-1] if messages else {}
+    last_tcs = last_msg.get("toolCalls") if isinstance(last_msg, dict) else []
+    assistant_finished = (
+        bool(messages)
+        and last_msg.get("role") == "assistant"
+        and bool(last_msg.get("completed"))
+        and not any(isinstance(tc, dict) and tc.get("status") == "running" for tc in (last_tcs or []))
+    )
+
+    if assistant_finished and not any_running_step and "RUNNING" not in status_db and not not_idle_db:
+        _optimistic_convs.pop(cid, None)
+        if saved_custom and saved_custom.get("isRunning"):
+            saved_custom["isRunning"] = False
+            save_config(cfg)
+
+    custom_running = (
+        bool(saved_custom.get("isRunning", False))
+        and not assistant_finished
+        and ((time.time() - float(saved_custom.get("lastModifiedEpoch") or 0)) < 45.0)
+    )
 
     is_running = (
         any_running_step
         or "RUNNING" in status_db
         or bool(not_idle_db)
-        or bool(saved_custom.get("isRunning", False))
+        or custom_running
     )
-    if t_jsonl.exists():
+    if t_jsonl.exists() and not assistant_finished:
         try:
             if (time.time() - t_jsonl.stat().st_mtime) < 8.0:
                 is_running = True
@@ -2906,27 +3048,57 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
                 real_cid = str(cp.get("conversationId") or "").strip()
                 auto_title = title_in or (prompt.split("\n")[0][:70] if prompt else "New Conversation")
 
+                proj_cfg = load_projects_config()
+                primary_proj = get_primary_project_info(proj_cfg)
+                primary_pid = str(primary_proj.get("id") or "default-cli-project")
+
                 if inst is not None:
-                    eff_proj = proj_id if (proj_id and proj_id not in ("local-workspace", "outside-of-project")) else "e3009192-6136-4652-a8f6-1f1238312ad6"
+                    eff_proj = (
+                        proj_id
+                        if (proj_id and proj_id not in ("local-workspace", "outside-of-project") and proj_id in proj_cfg)
+                        else primary_pid
+                    )
+                    folder_uri = str((proj_cfg.get(eff_proj) or {}).get("folderUri") or primary_proj.get("folderUri") or "").strip()
                     if not real_cid:
                         if cmd_id_local:
                             _save_cmd_effect_checkpoint(cmd_id_local, {"stage": "start_intent"})
-                        try:
-                            sc = inst.rpc(
-                                "StartCascade",
-                                {
-                                    "source": "CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT",
-                                    "trajectoryType": "CORTEX_TRAJECTORY_TYPE_CASCADE",
-                                    "projectEnvConfig": {"projectId": eff_proj, "defaultProjectEnvironment": {}},
-                                },
-                                timeout=12,
-                            )
-                            real_cid = str((sc or {}).get("cascadeId") or "").strip()
-                            if real_cid and cmd_id_local:
-                                _save_cmd_effect_checkpoint(cmd_id_local, {"conversationId": real_cid, "stage": "started"})
-                        except Exception as e:
-                            _worker_telemetry["last_rpc_error"] = f"StartCascade: {e}"
-                            real_cid = ""
+                        start_payloads: list[dict] = []
+                        if folder_uri:
+                            start_payloads.append({
+                                "source": "CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT",
+                                "trajectoryType": "CORTEX_TRAJECTORY_TYPE_CASCADE",
+                                "workspaceUris": [folder_uri],
+                            })
+                        if (
+                            eff_proj
+                            and eff_proj not in ("default-cli-project", "outside-of-project", "local-workspace")
+                            and not eff_proj.startswith("ws-")
+                            and eff_proj in proj_cfg
+                        ):
+                            p_payload: dict = {
+                                "source": "CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT",
+                                "trajectoryType": "CORTEX_TRAJECTORY_TYPE_CASCADE",
+                                "projectEnvConfig": {"projectId": eff_proj, "defaultProjectEnvironment": {}},
+                            }
+                            if folder_uri:
+                                p_payload["workspaceUris"] = [folder_uri]
+                            start_payloads.append(p_payload)
+                        start_payloads.append({
+                            "source": "CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT",
+                            "trajectoryType": "CORTEX_TRAJECTORY_TYPE_CASCADE",
+                        })
+
+                        for sc_payload in start_payloads:
+                            try:
+                                sc = inst.rpc("StartCascade", sc_payload, timeout=12)
+                                real_cid = str((sc or {}).get("cascadeId") or "").strip()
+                                if real_cid:
+                                    if cmd_id_local:
+                                        _save_cmd_effect_checkpoint(cmd_id_local, {"conversationId": real_cid, "stage": "started"})
+                                    break
+                            except Exception as e:
+                                _worker_telemetry["last_rpc_error"] = f"StartCascade: {e}"
+                                real_cid = ""
 
                     if real_cid:
                         ui_media, cascade_media, file_notes = save_and_prepare_media(inst, real_cid, media_raw)
@@ -2998,7 +3170,7 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
                             "new-conversation",
                             f"--model={cli_model}",
                             full_prompt,
-                            project_id=proj_id if proj_id and proj_id != "local-workspace" else "",
+                            project_id=eff_proj if (eff_proj in proj_cfg and eff_proj not in ("local-workspace", "default-cli-project", "outside-of-project") and not eff_proj.startswith("ws-")) else "",
                         )
                         new_c = ((res.get("response") or {}).get("newConversation")) or {}
                         if new_c.get("conversationId"):
@@ -3011,15 +3183,20 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
                     except Exception as e:
                         _worker_telemetry["last_rpc_error"] = f"new-conversation: {e}"
 
+                    return {
+                        "ok": False,
+                        "dispatchedToIde": False,
+                        "error": f"Đã kết nối Antigravity Desktop (PID {inst.pid}) nhưng không khởi tạo được phiên mới ({_worker_telemetry.get('last_rpc_error') or 'RPC StartCascade returned None'}). Hãy mở sẵn 1 thư mục Workspace trong Antigravity Desktop rồi thử lại.",
+                    }, 502
+
                 real_cid = str(uuid.uuid4())
                 ui_media, _, _ = save_and_prepare_media(None, real_cid, media_raw)
                 now_ms = int(time.time() * 1000)
                 u_msg: dict = {"id": f"u_{now_ms}", "role": "user", "content": prompt or "Phân tích media đính kèm", "timestamp": now_ms}
                 if ui_media:
                     u_msg["media"] = ui_media
-                proj_cfg = load_projects_config()
-                eff_pid = proj_id or "e3009192-6136-4652-a8f6-1f1238312ad6"
-                eff_pname = (proj_cfg.get(eff_pid) or {}).get("name") or "AG"
+                eff_pid = proj_id if (proj_id and proj_id in proj_cfg) else primary_pid
+                eff_pname = (proj_cfg.get(eff_pid) or {}).get("name") or str(primary_proj.get("name") or "Workspace")
                 conv_obj = {
                     "id": real_cid,
                     "title": auto_title,
