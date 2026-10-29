@@ -45,21 +45,21 @@ cd antigravity-mobile-companion
 - **Chạy bằng dòng lệnh Python (Chỉ cần Python 3.9+ chuẩn, 0 phụ thuộc ngoài)**:
 
 ```bash
-# Chạy kèm đường hầm 4G/5G Cloudflare Quick Tunnel + tự mở trình duyệt hiện Mã QR:
-python companion_server.py --tunnel
+# Chạy kèm đường hầm 4G/5G Cloudflare Quick Tunnel + tự tách tiến trình WMI (không bị ngắt Error 1033 khi đóng phiên AI):
+python companion_server.py --tunnel --detach
 
 # Đặt mã PIN cố định theo ý muốn (ví dụ 888999):
-python companion_server.py --tunnel --pin 888999 --port 8046
+python companion_server.py --tunnel --detach --pin 888999 --port 8046
 
 # Chế độ Wi-Fi công cộng / Quán Cafe (Khóa mạng LAN, chỉ mở Localhost + Tunnel):
-python companion_server.py --tunnel --localhost-only
+python companion_server.py --tunnel --detach --localhost-only
 ```
 
 ---
 
-## 🧪 Tự Kiểm Thử Bảo Mật, TTL/Idempotency, Giao Diện & WebSocket Realtime (14/14 Tests)
+## 🧪 Tự Kiểm Thử Bảo Mật, TTL/Idempotency, WMI Detach & WebSocket Realtime (16/16 Tests)
 
-Repo đi kèm bộ kiểm thử tự động `test_companion_security.py` giúp bạn tự kiểm chứng 14 hạng mục bảo mật, chống trễ/lặp lệnh, giao diện chuẩn Antigravity và đồng bộ WebSocket ngay trên máy tính:
+Repo đi kèm bộ kiểm thử tự động `test_companion_security.py` giúp bạn tự kiểm chứng 16 hạng mục bảo mật, chống trễ/lặp lệnh, tự tách WMI chống Error 1033, giao diện chuẩn Antigravity và đồng bộ WebSocket ngay trên máy tính:
 
 ```bash
 python test_companion_security.py

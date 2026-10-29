@@ -381,10 +381,38 @@ def run_test_suite() -> int:
             st_bf, _, _ = http_req(f"{base_url}/api/ag-companion/auth-session", method="POST", body={"pin": f"00000{i}"})
             statuses.append(st_bf)
         assert 429 in statuses, f"Brute-force rate limit không kích hoạt HTTP 429! Statuses={statuses}"
-        print(f"[PASS 15/15] Chống Brute-Force kích hoạt khóa IP tự động (Statuses={statuses} -> HTTP 429 Locked).")
+        print(f"[PASS 15/16] Chống Brute-Force kích hoạt khóa IP tự động (Statuses={statuses} -> HTTP 429 Locked).")
+
+        # 16. Kiểm thử WMI Detached Daemon (--detach) chống ngắt kết nối Error 1033 khi phiên lệnh AI kết thúc
+        if os.name == "nt":
+            detach_port = cs.find_available_port(18346)
+            detach_pin = "789123"
+            r_det = subprocess.run(
+                [sys.executable, str(SERVER_SCRIPT), "--port", str(detach_port), "--strict-port", "--pin", detach_pin, "--no-browser", "--detach"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=20,
+            )
+            assert r_det.returncode == 0, f"Lệnh --detach thất bại: {r_det.stderr or r_det.stdout}"
+            assert "WMI Win32_Process" in (r_det.stdout or ""), "Output --detach thiếu xác nhận WMI Win32_Process!"
+            try:
+                st_det, h_det, _ = http_req(f"http://127.0.0.1:{detach_port}/api/ag-companion/health")
+                assert st_det == 200 and isinstance(h_det, dict) and h_det.get("ok") is True, f"Tiến trình WMI detached không sống sau khi tiến trình cha kết thúc: {st_det} {h_det}"
+                print(f"[PASS 16/16] WMI Detached Daemon (--detach): Tiến trình vẫn sống độc lập 100% sau khi tiến trình cha kết thúc (Chống Error 1033).")
+            finally:
+                try:
+                    if cs.RUNTIME_STATE_FILE.exists():
+                        rt_info = json.loads(cs.RUNTIME_STATE_FILE.read_text(encoding="utf-8"))
+                        det_pid = int(rt_info.get("pid") or 0)
+                        if det_pid > 0:
+                            subprocess.run(["taskkill", "/F", "/PID", str(det_pid)], capture_output=True)
+                except Exception:
+                    pass
 
         print("=" * 78)
-        print("  KẾT QUẢ: 15/15 BÀI KIỂM THỬ BẢO MẬT, MULTI-USER, TTL/IDEMPOTENCY & WEBSOCKET ĐẠT 100% (PASS)")
+        print("  KẾT QUẢ: 16/16 BÀI KIỂM THỬ BẢO MẬT, MULTI-USER, WMI DETACH & WEBSOCKET ĐẠT 100% (PASS)")
         print("=" * 78)
         return 0
     finally:

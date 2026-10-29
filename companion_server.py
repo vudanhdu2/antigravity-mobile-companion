@@ -58,20 +58,58 @@ except Exception:
     pass
 
 HOME = Path.home()
-ANTIGRAVITY_DIR = HOME / ".gemini" / "antigravity"
+
+
+def _resolve_gemini_root_dir() -> Path:
+    env_dir = os.environ.get("AG_GEMINI_DIR", "").strip()
+    if env_dir:
+        cand = Path(env_dir)
+        if cand.exists():
+            return cand
+    candidates: list[Path] = [HOME / ".gemini"]
+    try:
+        for pat in ("Antigravity*", ".antigravity*"):
+            for d in HOME.glob(pat):
+                if not d.is_dir() or d.name in (".antigravity_tools", ".antigravity_cockpit"):
+                    continue
+                sub = d / ".gemini"
+                if sub.is_dir():
+                    candidates.append(sub)
+                elif (d / "antigravity").is_dir():
+                    candidates.append(d)
+    except Exception:
+        pass
+    best = HOME / ".gemini"
+    best_mtime = -1.0
+    for c in candidates:
+        try:
+            db_f = c / "antigravity" / "conversation_summaries.db"
+            if db_f.exists():
+                mt = db_f.stat().st_mtime
+                if mt > best_mtime:
+                    best_mtime = mt
+                    best = c
+        except Exception:
+            continue
+    return best
+
+
+GEMINI_ROOT_DIR = _resolve_gemini_root_dir()
+ANTIGRAVITY_DIR = GEMINI_ROOT_DIR / "antigravity"
 SUMMARIES_DB = ANTIGRAVITY_DIR / "conversation_summaries.db"
 CONV_DIR = ANTIGRAVITY_DIR / "conversations"
 BRAIN_DIR = ANTIGRAVITY_DIR / "brain"
 ANNOTATIONS_DIR = ANTIGRAVITY_DIR / "annotations"
-PROJECTS_DIR = HOME / ".gemini" / "config" / "projects"
+PROJECTS_DIR = GEMINI_ROOT_DIR / "config" / "projects"
 ALT_PROJECTS_DIR = ANTIGRAVITY_DIR / "projects"
 COMPANION_DATA_DIR = ANTIGRAVITY_DIR / "companion_selfhost"
 UPLOADS_DIR = COMPANION_DATA_DIR / "uploads"
 BIN_DIR = COMPANION_DATA_DIR / "bin"
 CONFIG_FILE = COMPANION_DATA_DIR / "config.json"
 CMD_STATE_DB = COMPANION_DATA_DIR / "cmd_state.db"
+RUNTIME_STATE_FILE = COMPANION_DATA_DIR / "runtime_state.json"
 
-COMPANION_RUNTIME_VERSION = "2026.10.26-v2.2.1-multiuser-fix"
+COMPANION_RUNTIME_VERSION = "2026.10.29-v2.2.2-wmi-tunnel-guard"
 CMD_TTL_MS = 180_000          # Hard cap: 3 minutes max command age
 CMD_CLAIM_LEASE_MS = 60_000   # Atomic claim lease: 60 seconds
 
@@ -109,11 +147,14 @@ _state_lock = threading.RLock()
 _tunnel_lock = threading.Lock()
 _tunnel_state: dict = {
     "running": False,
+    "wanted": False,
+    "localPort": 0,
     "url": "",
     "process": None,
     "error": "",
     "startedAt": 0,
 }
+_tunnel_watchdog_started: list[bool] = [False]
 
 # Quản lý bảo mật phiên, chống brute-force và nhật ký truy cập
 _auth_lock = threading.RLock()
@@ -1975,20 +2016,83 @@ def ensure_cloudflared_binary() -> Path:
     return local_cf
 
 
+def _sync_runtime_state_file() -> None:
+    try:
+        COMPANION_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        port_val = int(APP_CONFIG.get("port") or DEFAULT_PORT)
+        pin_val = str(APP_CONFIG.get("pin") or "")
+        ips = get_lan_and_tailscale_ips()
+        tun_base = str(_tunnel_state.get("url") or "")
+        tun_running = bool(_tunnel_state.get("running") and tun_base)
+        tun_url = f"{tun_base}/?pin={pin_val}" if tun_running and pin_val else ""
+        payload = {
+            "pid": os.getpid(),
+            "updatedAt": int(time.time()),
+            "version": COMPANION_RUNTIME_VERSION,
+            "hostName": HOST_NAME,
+            "antigravityDir": str(ANTIGRAVITY_DIR),
+            "port": port_val,
+            "pin": pin_val,
+            "allowLan": bool(APP_CONFIG.get("allowLan", True)),
+            "localUrl": f"http://127.0.0.1:{port_val}/?pin={pin_val}" if pin_val else f"http://127.0.0.1:{port_val}/",
+            "lanUrl": f"http://{ips['lan_ip']}:{port_val}/?pin={pin_val}" if pin_val else f"http://{ips['lan_ip']}:{port_val}/",
+            "tailscaleUrl": (f"http://{ips['tailscale_ip']}:{port_val}/?pin={pin_val}" if ips.get("tailscale_ip") else ""),
+            "tunnelRunning": tun_running,
+            "tunnelBaseUrl": tun_base,
+            "tunnelUrl": tun_url,
+            "tunnelError": str(_tunnel_state.get("error") or ""),
+        }
+        tmp_file = RUNTIME_STATE_FILE.with_suffix(".tmp")
+        tmp_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp_file.replace(RUNTIME_STATE_FILE)
+    except Exception:
+        pass
+
+
+def _tunnel_watchdog_loop() -> None:
+    while True:
+        time.sleep(6.0)
+        try:
+            wanted = bool(_tunnel_state.get("wanted"))
+            port_val = int(_tunnel_state.get("localPort") or 0)
+            proc = _tunnel_state.get("process")
+            if wanted and port_val > 0:
+                if proc is None or proc.poll() is not None:
+                    append_security_audit("TUNNEL_AUTOHEAL", "127.0.0.1", "Phát hiện cloudflared bị ngắt, đang tự động nối lại đường hầm 4G/5G...", "warn")
+                    start_cloudflare_quick_tunnel(port_val)
+        except Exception:
+            pass
+
+
 def start_cloudflare_quick_tunnel(local_port: int) -> dict:
     with _tunnel_lock:
+        _tunnel_state["wanted"] = True
+        _tunnel_state["localPort"] = int(local_port)
+        if not _tunnel_watchdog_started[0]:
+            _tunnel_watchdog_started[0] = True
+            threading.Thread(target=_tunnel_watchdog_loop, daemon=True, name="ag-companion-tunnel-watchdog").start()
+
         proc = _tunnel_state.get("process")
         if _tunnel_state.get("running") and proc and proc.poll() is None and _tunnel_state.get("url"):
+            _sync_runtime_state_file()
             return {"ok": True, "running": True, "url": _tunnel_state["url"]}
+
+        if proc and proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
 
         _tunnel_state["error"] = ""
         try:
             cf_bin = ensure_cloudflared_binary()
         except Exception as e:
             _tunnel_state["error"] = f"Không tải được cloudflared: {e}"
+            _sync_runtime_state_file()
             return {"ok": False, "running": False, "error": _tunnel_state["error"]}
 
         cmd = [str(cf_bin), "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{local_port}"]
+        spawn_flags = NO_WINDOW | (0x00000200 if os.name == "nt" else 0)
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -1997,10 +2101,11 @@ def start_cloudflare_quick_tunnel(local_port: int) -> dict:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                creationflags=NO_WINDOW,
+                creationflags=spawn_flags,
             )
         except Exception as e:
             _tunnel_state["error"] = str(e)
+            _sync_runtime_state_file()
             return {"ok": False, "running": False, "error": str(e)}
 
         _tunnel_state["process"] = proc
@@ -2017,10 +2122,13 @@ def start_cloudflare_quick_tunnel(local_port: int) -> dict:
                 if m:
                     _tunnel_state["url"] = m.group(1)
                     found_event.set()
+                    _sync_runtime_state_file()
             _tunnel_state["running"] = False
+            _sync_runtime_state_file()
 
         threading.Thread(target=_reader, daemon=True).start()
         found_event.wait(timeout=18.0)
+        _sync_runtime_state_file()
         if _tunnel_state["url"]:
             append_security_audit("TUNNEL_STARTED", "127.0.0.1", f"Đã bật Cloudflare Quick Tunnel: {_tunnel_state['url']}", "info")
             return {"ok": True, "running": True, "url": _tunnel_state["url"]}
@@ -2029,6 +2137,7 @@ def start_cloudflare_quick_tunnel(local_port: int) -> dict:
 
 def stop_cloudflare_quick_tunnel() -> dict:
     with _tunnel_lock:
+        _tunnel_state["wanted"] = False
         proc = _tunnel_state.get("process")
         if proc and proc.poll() is None:
             try:
@@ -2038,6 +2147,7 @@ def stop_cloudflare_quick_tunnel() -> dict:
         _tunnel_state["running"] = False
         _tunnel_state["url"] = ""
         _tunnel_state["process"] = None
+        _sync_runtime_state_file()
         append_security_audit("TUNNEL_STOPPED", "127.0.0.1", "Đã ngắt đường hầm 4G/5G Cloudflare Quick Tunnel", "warn")
         return {"ok": True, "running": False, "url": ""}
 
@@ -3316,6 +3426,146 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
 APP_CONFIG: dict = {}
 
 
+def spawn_wmi_detached_companion(args: argparse.Namespace) -> int:
+    COMPANION_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    cfg_init = load_or_create_config(custom_pin=args.pin or None, custom_port=args.port or None)
+    target_port = int(args.port or cfg_init.get("port") or DEFAULT_PORT)
+
+    # Dọn tiến trình companion_server.py / cloudflared.exe cũ đang giữ cùng cổng (nếu có)
+    cleanup_ps = (
+        f"$myPid = {os.getpid()}; "
+        f"$targetPort = '{target_port}'; "
+        "Get-CimInstance Win32_Process | Where-Object { "
+        "  $_.ProcessId -ne $myPid -and ( "
+        "    ($_.Name -like 'python*' -and $_.CommandLine -like '*companion_server.py*' -and ($_.CommandLine -notlike '*--port*' -or $_.CommandLine -like ('*--port ' + $targetPort + '*'))) -or "
+        "    ($_.Name -like 'cloudflared*' -and $_.CommandLine -like ('*127.0.0.1:' + $targetPort + '*')) "
+        "  ) "
+        "} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+    )
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", cleanup_ps],
+            capture_output=True,
+            timeout=10,
+            creationflags=NO_WINDOW,
+        )
+    except Exception:
+        pass
+
+    try:
+        if RUNTIME_STATE_FILE.exists():
+            RUNTIME_STATE_FILE.unlink()
+    except Exception:
+        pass
+
+    wmi_log = COMPANION_DATA_DIR / "companion_wmi.log"
+    script_path = Path(__file__).resolve()
+    child_cmd = [
+        sys.executable,
+        str(script_path),
+        "--foreground",
+        "--no-browser",
+        "--log-file",
+        str(wmi_log),
+    ]
+    if args.port:
+        child_cmd.extend(["--port", str(args.port)])
+    if args.strict_port:
+        child_cmd.append("--strict-port")
+    if args.pin:
+        child_cmd.extend(["--pin", str(args.pin)])
+    if args.tunnel:
+        child_cmd.append("--tunnel")
+    if args.localhost_only:
+        child_cmd.append("--localhost-only")
+
+    cmd_line = subprocess.list2cmdline(child_cmd)
+    spawn_ps = (
+        "$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }; "
+        "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ "
+        "  CommandLine = $env:AG_WMI_CMD; "
+        "  CurrentDirectory = $env:AG_WMI_CWD; "
+        "  ProcessStartupInformation = $si "
+        "}; "
+        "if ($r.ReturnValue -eq 0) { Write-Output $r.ProcessId } else { exit ([int]$r.ReturnValue) }"
+    )
+    env_copy = os.environ.copy()
+    env_copy["AG_WMI_CMD"] = cmd_line
+    env_copy["AG_WMI_CWD"] = str(script_path.parent)
+    start_ts = int(time.time())
+
+    r = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", spawn_ps],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env_copy,
+        timeout=15,
+        creationflags=NO_WINDOW,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(f"WMI Win32_Process.Create trả về mã lỗi {r.returncode}: {r.stderr}")
+
+    wmi_pid_str = (r.stdout or "").strip().splitlines()[-1].strip() if (r.stdout or "").strip() else "0"
+    wmi_pid = int(wmi_pid_str) if wmi_pid_str.isdigit() else 0
+
+    state_data: dict = {}
+    wait_deadline = time.time() + (24.0 if args.tunnel else 8.0)
+    while time.time() < wait_deadline:
+        if RUNTIME_STATE_FILE.exists():
+            try:
+                raw_st = json.loads(RUNTIME_STATE_FILE.read_text(encoding="utf-8"))
+                if int(raw_st.get("updatedAt") or 0) >= start_ts - 2:
+                    state_data = raw_st
+                    if not args.tunnel:
+                        break
+                    if state_data.get("tunnelUrl") or state_data.get("tunnelError"):
+                        break
+            except Exception:
+                pass
+        time.sleep(0.35)
+
+    listen_port = int(state_data.get("port") or target_port)
+    pin_code = str(state_data.get("pin") or cfg_init.get("pin") or "")
+    ips = get_lan_and_tailscale_ips()
+    local_url = state_data.get("localUrl") or f"http://127.0.0.1:{listen_port}/?pin={pin_code}"
+    lan_url = state_data.get("lanUrl") or f"http://{ips['lan_ip']}:{listen_port}/?pin={pin_code}"
+    tun_url = str(state_data.get("tunnelUrl") or "")
+    tun_err = str(state_data.get("tunnelError") or "")
+
+    print("=" * 76)
+    print("  ANTIGRAVITY MOBILE COMPANION v2.2 — WMI DETACHED DAEMON (CHỐNG ERROR 1033)")
+    print("=" * 76)
+    print(f"  * Tiến trình Độc Lập  : PID {wmi_pid} (WMI Win32_Process — Tách khỏi Job Object AI)")
+    print(f"  * Máy trạm (Host PC)  : {HOST_NAME}")
+    print(f"  * Vùng dữ liệu Local  : {ANTIGRAVITY_DIR}")
+    print(f"  * Đồng bộ Realtime    : WebSocket ws://{ips['lan_ip']}:{listen_port}/ws (0.55s live stream)")
+    print(f"  * Mã PIN Bảo Mật      : {pin_code} (Chống Brute-Force: khóa IP sau {MAX_FAILED_ATTEMPTS} lần sai)")
+    print(f"  * Mở trên PC này      : {local_url}")
+    if state_data.get("allowLan", True):
+        print(f"  * Mở qua Wi-Fi LAN    : {lan_url}")
+    else:
+        print("  * Chế độ Wi-Fi LAN    : ĐANG KHÓA (Chỉ cho phép Localhost + Tunnel)")
+    if ips.get("tailscale_ip"):
+        print(f"  * Mở qua Tailscale    : http://{ips['tailscale_ip']}:{listen_port}/?pin={pin_code}")
+    if args.tunnel:
+        if tun_url:
+            print(f"  * Mở qua 4G/5G (Mọi nơi): {tun_url}")
+        else:
+            print(f"  * Lưu ý Tunnel        : {tun_err or 'Đang hoàn tất kết nối Cloudflare, xem trong giao diện Web'}")
+    print(f"  * Nhật ký chạy nền    : {wmi_log}")
+    print("=" * 76)
+
+    if not args.no_browser:
+        try:
+            import webbrowser
+            webbrowser.open(local_url)
+        except Exception:
+            pass
+    return 0
+
+
 def main() -> None:
     global APP_CONFIG
     parser = argparse.ArgumentParser(description="Antigravity Mobile Companion (Self-Host + WebSocket Realtime)")
@@ -3325,7 +3575,30 @@ def main() -> None:
     parser.add_argument("--tunnel", action="store_true", help="Bật ngay Cloudflare Quick Tunnel (4G/5G miễn phí)")
     parser.add_argument("--localhost-only", action="store_true", help="Khóa truy cập Wi-Fi LAN (chỉ cho phép Localhost + Cloudflare Tunnel)")
     parser.add_argument("--no-browser", action="store_true", help="Không tự mở trình duyệt trên PC")
+    parser.add_argument("--detach", action="store_true", help="Chạy độc lập qua WMI Win32_Process.Create (không bị tắt khi đóng phiên chat AI)")
+    parser.add_argument("--foreground", action="store_true", help="Giữ tiến trình chạy trực tiếp trong terminal hiện tại")
+    parser.add_argument("--log-file", type=str, default="", help="Đường dẫn file ghi log khi chạy ngầm WMI")
     args = parser.parse_args()
+
+    if args.log_file:
+        try:
+            lf = Path(args.log_file)
+            lf.parent.mkdir(parents=True, exist_ok=True)
+            log_fh = open(lf, "a", encoding="utf-8", buffering=1, errors="replace")
+            sys.stdout = log_fh
+            sys.stderr = log_fh
+        except Exception:
+            pass
+
+    # Trên Windows, nếu gọi --detach hoặc gọi --tunnel từ trong phiên lệnh của AI (stdin không phải TTY)
+    # mà không truyền --foreground -> tự động tách qua WMI Win32_Process.Create để không bị Windows Job Object đóng!
+    is_non_tty_ai_session = (not sys.stdin) or (not sys.stdin.isatty())
+    if os.name == "nt" and (not args.foreground) and (args.detach or (args.tunnel and is_non_tty_ai_session)):
+        try:
+            spawn_wmi_detached_companion(args)
+            return
+        except Exception as e:
+            print(f"[!] Không tách được WMI ({e}), chuyển sang chạy trực tiếp...")
 
     APP_CONFIG = load_or_create_config(custom_pin=args.pin or None, custom_port=args.port or None)
     preferred_port = int(args.port or APP_CONFIG.get("port") or DEFAULT_PORT)
@@ -3349,6 +3622,10 @@ def main() -> None:
     _ws_thread_ref[0] = ws_thread
     _worker_telemetry["last_ws_loop_at_ms"] = int(time.time() * 1000)
     ws_thread.start()
+
+    bind_host = "127.0.0.1" if args.localhost_only else "0.0.0.0"
+    srv = ThreadingHTTPServer((bind_host, listen_port), CompanionRequestHandler)
+    _sync_runtime_state_file()
 
     print("=" * 76)
     print("  ANTIGRAVITY MOBILE COMPANION v2.2 — HARDENED SYNC + WEBSOCKET REALTIME")
@@ -3376,9 +3653,7 @@ def main() -> None:
     else:
         print("  * Mẹo 4G/5G           : Bấm nút [Settings] -> [Kết Nối QR & 4G/5G] trên giao diện")
     print("=" * 76)
-
-    bind_host = "127.0.0.1" if args.localhost_only else "0.0.0.0"
-    srv = ThreadingHTTPServer((bind_host, listen_port), CompanionRequestHandler)
+    _sync_runtime_state_file()
 
     if not args.no_browser:
         def _open_ui() -> None:
