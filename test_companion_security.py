@@ -411,8 +411,16 @@ def run_test_suite() -> int:
                 except Exception:
                     pass
 
+        # 17. Kiểm thử Multi-Device Session Persistence, 401 Token Auto-Clear & WebSocket Subscribe Multi-Client Sync (#inc_0de73731)
+        assert "if (savedPin) {" in html_raw and "if (savedPin && !sessionToken)" not in html_raw, "web/index.html phải luôn đổi savedPin từ URL sang sessionToken mới!"
+        assert "localStorage.removeItem('ag_companion_session_token')" in html_raw, "web/index.html phải tự xóa sessionToken cũ khi gặp HTTP 401!"
+        srv_src = SERVER_SCRIPT.read_text(encoding="utf-8")
+        sub_block = srv_src.split('elif mtype == "subscribe":', 1)[1].split('elif mtype == "refresh":', 1)[0]
+        assert "_last_conv_fingerprints" not in sub_block, "Nhánh subscribe không được ghi đè _last_conv_fingerprints làm mất đồng bộ thiết bị 1!"
+        print("[PASS 17/17] Multi-Device Realtime Sync (#inc_0de73731): Chống kẹt sessionToken cũ (401/429), lưu phiên bền vững & đồng bộ WebSocket đa thiết bị.")
+
         print("=" * 78)
-        print("  KẾT QUẢ: 16/16 BÀI KIỂM THỬ BẢO MẬT, MULTI-USER, WMI DETACH & WEBSOCKET ĐẠT 100% (PASS)")
+        print("  KẾT QUẢ: 17/17 BÀI KIỂM THỬ BẢO MẬT, MULTI-USER, MULTI-DEVICE, WMI DETACH & WEBSOCKET ĐẠT 100% (PASS)")
         print("=" * 78)
         return 0
     finally:

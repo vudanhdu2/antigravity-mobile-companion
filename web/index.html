@@ -881,6 +881,10 @@
       }
       const res = await fetch(path, Object.assign({}, options, { headers }));
       if (res.status === 401 || res.status === 429) {
+        if (res.status === 401 && sessionToken) {
+          sessionToken = '';
+          localStorage.removeItem('ag_companion_session_token');
+        }
         const errData = await res.json().catch(() => ({}));
         document.getElementById('pinLockModal').classList.remove('hidden');
         if (errData.error) {
@@ -2339,8 +2343,8 @@
       // Gắn Composer vào màn hình New Conversation ban đầu
       mountComposerTo('emptyComposerMount');
 
-      // Nếu có mã PIN từ URL vừa lưu, tự động đổi sang Session Token 256-bit
-      if (savedPin && !sessionToken) {
+      // Nếu có mã PIN từ URL vừa lưu, luôn đổi sang Session Token 256-bit mới (tránh kẹt sessionToken cũ trong localStorage)
+      if (savedPin) {
         try {
           const r = await fetch('/api/ag-companion/auth-session', {
             method: 'POST',

@@ -574,8 +574,12 @@ def load_or_create_config(custom_pin: str | None = None, custom_port: int | None
             cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8", errors="replace"))
         except Exception:
             cfg = {}
+    prev_pin = str(cfg.get("pin") or "").strip()
     if custom_pin:
-        cfg["pin"] = str(custom_pin).strip()
+        new_pin_val = str(custom_pin).strip()
+        if prev_pin and prev_pin != new_pin_val:
+            cfg["activeSessions"] = {}
+        cfg["pin"] = new_pin_val
     elif not cfg.get("pin"):
         cfg["pin"] = _generate_random_pin()
     if custom_port:
@@ -585,6 +589,18 @@ def load_or_create_config(custom_pin: str | None = None, custom_port: int | None
     cfg.setdefault("allowLan", True)
     cfg.setdefault("pinned", {})
     cfg.setdefault("customConvs", {})
+    raw_sessions = cfg.get("activeSessions")
+    valid_sessions: dict[str, dict] = {}
+    now_ts = time.time()
+    if isinstance(raw_sessions, dict):
+        for tok, info in raw_sessions.items():
+            if isinstance(tok, str) and tok.startswith("ags_") and isinstance(info, dict):
+                if (now_ts - float(info.get("lastSeen") or 0)) <= SESSION_TTL_SEC:
+                    valid_sessions[tok] = info
+    cfg["activeSessions"] = valid_sessions
+    with _auth_lock:
+        _active_sessions.clear()
+        _active_sessions.update(valid_sessions)
     save_config(cfg)
     return cfg
 
@@ -2674,6 +2690,8 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
                     continue
                 if info.get("ip") == client_ip and info.get("ua") == ua:
                     info["lastSeen"] = now
+                    APP_CONFIG["activeSessions"] = dict(_active_sessions)
+                    save_config(APP_CONFIG)
                     return tok
             tok = f"ags_{secrets.token_urlsafe(32)}"
             _active_sessions[tok] = {
@@ -2684,6 +2702,8 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
                 "createdAt": int(now * 1000),
                 "lastSeen": now,
             }
+            APP_CONFIG["activeSessions"] = dict(_active_sessions)
+            save_config(APP_CONFIG)
             append_security_audit("SESSION_GRANTED", client_ip, f"Mở khóa thành công từ {via} ({ua[:50]})", "info")
             return tok
 
@@ -2800,7 +2820,6 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
                         if sub_cid:
                             _viewed_overrides[str(sub_cid)] = time.time()
                             detail = read_local_conversation_detail(str(sub_cid), APP_CONFIG)
-                            _last_conv_fingerprints[str(sub_cid)] = compute_conv_fingerprint(detail)
                             ws_send_frame(
                                 client,
                                 json.dumps({"type": "conversation", "conversationId": str(sub_cid), "data": detail}, ensure_ascii=False),
@@ -3039,6 +3058,7 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
                 _active_sessions.clear()
                 _failed_attempts.clear()
                 _locked_ips.clear()
+                APP_CONFIG["activeSessions"] = {}
             new_sess = self._issue_session_token(client_ip, via)
             append_security_audit("PIN_ROTATED", client_ip, f"Đã đổi mã PIN mới và thu hồi toàn bộ phiên cũ ({via})", "warn")
             self._send_json({"ok": True, "pin": new_pin, "sessionToken": new_sess})
@@ -3050,6 +3070,7 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
             if body.get("revokeAllSessions"):
                 with _auth_lock:
                     _active_sessions.clear()
+                    APP_CONFIG["activeSessions"] = {}
             save_config(APP_CONFIG)
             client_ip, via = self._client_ip_and_via()
             sess_tok = self._issue_session_token(client_ip, via)
