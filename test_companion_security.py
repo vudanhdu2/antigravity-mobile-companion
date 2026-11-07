@@ -207,9 +207,14 @@ def run_test_suite() -> int:
             "Customizations",
             "New Conversation",
             "connectRealtimeWebSocket",
+            "syncMobileVisualViewport",
+            "mobileModelSheetModal",
+            "mobileHomeComposerMount",
+            "scrollToBottomBtn",
+            "View Usage",
         ]:
             assert marker in html_raw, f"Thiếu thành phần giao diện chuẩn Google Antigravity: {marker}"
-        print("[PASS 2/14] Giao diện chuẩn Google Antigravity (Sidebar, Composer 2 tầng, WebSocket client, Google Sans).")
+        print("[PASS 2/14] Giao diện chuẩn Google Antigravity Desktop & Mobile Web (visualViewport lock, Model Bottom Sheet, Composer 2 dòng, Google Sans).")
 
         st, res_unauth, _ = http_req(f"{base_url}/api/ag-companion/overview")
         assert st == 401, f"Mong đợi HTTP 401 khi không có PIN, nhận được {st}"

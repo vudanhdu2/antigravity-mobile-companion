@@ -23,19 +23,25 @@
       font-variant-numeric: tabular-nums;
     }
     body {
-      background-color: #f9f9f8;
-      color: #1f1f1f;
+      background-color: #1e1f1c;
+      color: #e3e3e3;
       margin: 0;
       padding: 0;
       overflow: hidden;
+    }
+    @media (min-width: 768px) {
+      body {
+        background-color: #f9f9f8;
+        color: #1f1f1f;
+      }
     }
     /* Ẩn thanh cuộn thô của trình duyệt trên Sidebar để giống hệt Antigravity Desktop */
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     .thin-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
     .thin-scroll::-webkit-scrollbar-track { background: transparent; }
-    .thin-scroll::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.14); border-radius: 9999px; }
-    .thin-scroll::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.25); }
+    .thin-scroll::-webkit-scrollbar-thumb { background: rgba(128, 128, 128, 0.22); border-radius: 9999px; }
+    .thin-scroll::-webkit-scrollbar-thumb:hover { background: rgba(128, 128, 128, 0.35); }
     @keyframes spinArc {
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
@@ -45,7 +51,7 @@
     }
   </style>
 </head>
-<body class="h-dvh w-screen flex flex-col select-none overflow-hidden bg-[#f9f9f8] text-[#1f1f1f]">
+<body class="h-dvh w-screen flex flex-col select-none overflow-hidden bg-[#1e1f1c] md:bg-[#f9f9f8] text-[#e3e3e3] md:text-[#1f1f1f]">
 
   <!-- ===================================================================== -->
   <!-- MÀN HÌNH NHẬP MÃ PIN BẢO MẬT (KHI CHƯA CÓ SESSION TOKEN HỢP LỆ)        -->
@@ -296,14 +302,114 @@
       </div>
     </aside>
 
-    <!-- 2. RIGHT MAIN CANVAS (Chuẩn ảnh mẫu Google Antigravity) -->
-    <main class="flex-1 h-full flex flex-col bg-[#f9f9f8] relative overflow-hidden">
+    <!-- 2. RIGHT MAIN CANVAS (Chuẩn ảnh mẫu Google Antigravity Desktop & Mobile Web) -->
+    <main class="flex-1 h-full flex flex-col bg-[#1e1f1c] md:bg-[#f9f9f8] relative overflow-hidden">
 
-      <!-- Top Header Bar -->
-      <div class="h-[52px] px-4 flex items-center justify-between shrink-0">
+      <!-- ================================================================= -->
+      <!-- MOBILE TOP HEADER BAR (52px - Chuẩn antigravity.google.com Mobile) -->
+      <!-- ================================================================= -->
+      <div class="flex md:hidden h-[52px] px-3 items-center justify-between shrink-0 bg-[#1e1f1c] border-b border-white/[0.06] relative">
+        <!-- Trạng thái Mobile Home (!activeConversationId): [A] [🟢 vudanhdu-cosmic-spark ⌄] ... [🔍] [⚙] [↻] [💬!] [Avatar] -->
+        <div id="mobileHomeHeaderBar" class="flex items-center justify-between w-full gap-1.5">
+          <div class="flex items-center gap-2 min-w-0">
+            <!-- 4-color Antigravity Ribbon Logo -->
+            <button type="button" onclick="startNewConversation()" class="shrink-0 p-0.5 cursor-pointer" title="Antigravity Home">
+              <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none">
+                <defs>
+                  <linearGradient id="ag_mob_grad" x1="2" y1="20" x2="22" y2="4" gradientUnits="userSpaceOnUse">
+                    <stop offset="0%" stop-color="#4285F4" />
+                    <stop offset="35%" stop-color="#34A853" />
+                    <stop offset="68%" stop-color="#FBBC05" />
+                    <stop offset="100%" stop-color="#EA4335" />
+                  </linearGradient>
+                </defs>
+                <path d="M12 3.2C9.8 3.2 8.2 5.4 6.6 9.2L3.3 17.2C2.7 18.6 3.5 20.1 4.9 20.3C6.1 20.5 7.2 19.7 7.8 18.3L9.3 14.8C10.1 13.1 11 12.3 12 12.3C13 12.3 13.9 13.1 14.7 14.8L16.2 18.3C16.8 19.7 17.9 20.5 19.1 20.3C20.5 20.1 21.3 18.6 20.7 17.2L17.4 9.2C15.8 5.4 14.2 3.2 12 3.2Z" fill="url(#ag_mob_grad)" />
+              </svg>
+            </button>
+
+            <!-- Host Pill Selector -->
+            <button
+              type="button"
+              onclick="toggleMobileHostPopover(event)"
+              class="px-2.5 py-1.5 rounded-xl bg-[#282926] border border-[#3a3b38] flex items-center gap-1.5 min-w-0 max-w-[162px] cursor-pointer"
+            >
+              <span id="mobileHostStatusDot" class="w-2 h-2 rounded-full bg-[#34a853] shrink-0"></span>
+              <span id="mobileHostNameLabel" class="text-[13px] font-medium text-[#e3e3e3] truncate">vudanhdu-cosmic-spark</span>
+              <svg class="w-3.5 h-3.5 text-[#9aa0a6] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </div>
+
+          <div class="flex items-center gap-0.5 shrink-0">
+            <button type="button" onclick="toggleMobileSearchBar()" title="Search conversations" class="p-2 rounded-full text-[#b8bcb7] hover:text-white hover:bg-white/[0.06] cursor-pointer">
+              <svg class="w-[17px] h-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            </button>
+            <button type="button" onclick="openCustomizationsModal()" title="Customizations" class="p-2 rounded-full text-[#b8bcb7] hover:text-white hover:bg-white/[0.06] cursor-pointer">
+              <svg class="w-[17px] h-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+            <button type="button" onclick="refreshOverview(); showToast('Đã đồng bộ danh sách hội thoại');" title="Refresh" class="p-2 rounded-full text-[#b8bcb7] hover:text-white hover:bg-white/[0.06] cursor-pointer">
+              <svg class="w-[17px] h-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+            </button>
+            <button type="button" onclick="openSettingsModal('qr')" title="QR &amp; Security" class="p-2 rounded-full text-[#b8bcb7] hover:text-white hover:bg-white/[0.06] cursor-pointer">
+              <svg class="w-[17px] h-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M12 7v4"/><path d="M12 15h.01"/></svg>
+            </button>
+            <button type="button" onclick="openSettingsModal('qr')" title="Account &amp; QR Security" class="ml-0.5 p-[2px] rounded-full bg-gradient-to-tr from-[#4285f4] via-[#34a853] to-[#fbbc04] shrink-0 cursor-pointer">
+              <span class="w-7 h-7 rounded-full bg-[#2e7d32] text-white text-[12px] font-bold flex items-center justify-center border border-[#1e1f1c]">d</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Trạng thái Mobile Active Conversation (activeConversationId): [←] [Title...] ... [⋮] [⊟] [💬!] [Avatar] -->
+        <div id="mobileConvHeaderBar" class="hidden flex items-center justify-between w-full gap-1.5">
+          <div class="flex items-center gap-2 min-w-0 flex-1">
+            <button type="button" onclick="startNewConversation()" title="Back" class="p-1.5 -ml-1 rounded-full text-[#b8bcb7] hover:text-white hover:bg-white/[0.06] shrink-0 cursor-pointer">
+              <svg class="w-[19px] h-[19px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+            </button>
+            <span id="mobileHeaderConvTitle" class="text-[15px] font-medium text-[#e3e3e3] truncate">Conversation</span>
+            <span id="mobileHeaderRunningSpinner" class="hidden shrink-0">
+              <svg class="animate-spin-arc w-3.5 h-3.5 text-[#8ab4f8]" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-opacity="0.2" stroke-width="2.2"/>
+                <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+              </svg>
+            </span>
+          </div>
+
+          <div class="flex items-center gap-0.5 shrink-0">
+            <button type="button" id="mobileHeaderPinBtn" onclick="toggleActiveConvPin()" title="Pin conversation" class="p-2 rounded-full text-[#b8bcb7] hover:text-white hover:bg-white/[0.06] cursor-pointer">
+              <svg class="w-[17px] h-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+            </button>
+            <button type="button" onclick="refreshActiveConversationNow()" title="Refresh trajectory" class="p-2 rounded-full text-[#b8bcb7] hover:text-white hover:bg-white/[0.06] cursor-pointer">
+              <svg class="w-[17px] h-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 15h18"/></svg>
+            </button>
+            <button type="button" onclick="openSettingsModal('qr')" title="QR &amp; Security" class="p-2 rounded-full text-[#b8bcb7] hover:text-white hover:bg-white/[0.06] cursor-pointer">
+              <svg class="w-[17px] h-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M12 7v4"/><path d="M12 15h.01"/></svg>
+            </button>
+            <button type="button" onclick="openSettingsModal('qr')" title="Account &amp; QR Security" class="ml-0.5 p-[2px] rounded-full bg-gradient-to-tr from-[#4285f4] via-[#34a853] to-[#fbbc04] shrink-0 cursor-pointer">
+              <span class="w-7 h-7 rounded-full bg-[#2e7d32] text-white text-[12px] font-bold flex items-center justify-center border border-[#1e1f1c]">d</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Mobile Host Popover -->
+        <div id="mobileHostPopover" onclick="event.stopPropagation()" class="hidden absolute left-3 top-[50px] w-72 rounded-2xl bg-[#282926] border border-[#3a3b38] shadow-2xl py-2 z-50 text-[#e3e3e3]">
+          <div class="px-3.5 py-1.5 text-xs font-medium text-[#9aa0a6] flex items-center justify-between border-b border-white/[0.07]">
+            <span>Connected Machine</span>
+            <span id="mobileWsRealtimeBadge" class="text-[#34a853] font-semibold">● WS Realtime</span>
+          </div>
+          <div id="mobileHostInstancesList" class="py-1"></div>
+          <div class="px-2.5 pt-1.5 border-t border-white/[0.07] flex gap-1.5">
+            <button type="button" onclick="closeAllPopovers(); openHistoryModal();" class="flex-1 px-2.5 py-1.5 rounded-xl bg-white/[0.06] text-xs font-medium text-[#e3e3e3] cursor-pointer">History</button>
+            <button type="button" onclick="closeAllPopovers(); openSettingsModal('qr');" class="flex-1 px-2.5 py-1.5 rounded-xl bg-[#8ab4f8]/15 text-xs font-medium text-[#8ab4f8] cursor-pointer">Mã QR &amp; 4G/5G</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================================================================= -->
+      <!-- DESKTOP TOP HEADER BAR (52px - Chuẩn Antigravity Desktop)         -->
+      <!-- ================================================================= -->
+      <div class="hidden md:flex h-[52px] px-4 items-center justify-between shrink-0">
         <div class="flex items-center gap-2 min-w-0">
-          <!-- Nút mở Sidebar khi thu gọn hoặc trên Mobile -->
-          <div id="collapsedSidebarBtns" class="flex md:hidden items-center gap-2">
+          <!-- Nút mở Sidebar khi thu gọn trên Desktop -->
+          <div id="collapsedSidebarBtns" class="hidden items-center gap-2">
             <button
               type="button"
               onclick="expandSidebar()"
@@ -385,49 +491,143 @@
       </div>
 
       <!-- ================================================================= -->
-      <!-- TRẠNG THÁI 1: MÀN HÌNH NEW CONVERSATION (GIỮA MÀN HÌNH GIỐNG ẢNH) -->
+      <!-- TRẠNG THÁI 1: MÀN HÌNH HOME / NEW CONVERSATION                    -->
       <!-- ================================================================= -->
-      <div id="emptyStateView" class="flex-1 flex flex-col items-center justify-center px-4 sm:px-6 pb-16 overflow-y-auto">
-        <div class="w-full max-w-[660px]">
-          <!-- Nút chọn thư mục Project phía trên khung nhập: 📁 AG ⌄ -->
-          <div class="mb-2 flex items-center relative">
-            <button
-              type="button"
-              onclick="toggleProjectDropdown(event)"
-              class="flex items-center gap-1.5 px-2 py-1 rounded-md text-[13px] text-[#5f6368] hover:text-[#1f1f1f] hover:bg-black/[0.04] transition-colors cursor-pointer"
-            >
-              <svg class="w-[15px] h-[15px] text-[#787878]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
-              </svg>
-              <span id="selectedProjectLabel">AG</span>
-              <svg class="w-3.5 h-3.5 text-[#787878]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="m6 9 6 6 6-6"/>
-              </svg>
-            </button>
+      <div id="emptyStateView" class="flex-1 flex flex-col min-h-0 overflow-hidden">
 
-            <!-- Dropdown chọn Project -->
-            <div id="projectDropdownMenu" class="hidden absolute left-0 top-full mt-1 w-64 rounded-xl bg-white border border-[#dfdfd8] shadow-xl py-1.5 z-50 max-h-64 overflow-y-auto thin-scroll">
-              <div class="px-3 py-1 text-xs font-medium text-[#787878]">Select Workspace Project</div>
-              <div id="projectDropdownItems"></div>
+        <!-- 1A. GIAO DIỆN MOBILE HOME (<768px): Customizations + Pinned + Projects Tree + Ô nhập cố định đáy (Giống hệt antigravity.google.com) -->
+        <div class="flex md:hidden flex-1 flex-col min-h-0 overflow-hidden bg-[#1e1f1c]">
+          <!-- Ô tìm kiếm nhanh trên Mobile Home -->
+          <div id="mobileHomeSearchBox" class="hidden px-3 pt-1.5 pb-1 shrink-0">
+            <div class="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#282926] border border-[#3a3b38]">
+              <svg class="w-4 h-4 text-[#9aa0a6] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <input
+                id="mobileHomeSearchInput"
+                type="text"
+                oninput="handleSearchInput(this.value)"
+                placeholder="Search conversations or projects..."
+                class="w-full bg-transparent text-[14px] text-[#e3e3e3] placeholder-[#8e918f] outline-none"
+              />
+              <button type="button" onclick="clearSearchInput()" class="text-[#9aa0a6] hover:text-white text-xs">✕</button>
             </div>
           </div>
 
-          <!-- Khung Composer 2 tầng chuẩn Antigravity sẽ được gắn vào đây khi ở Empty State -->
-          <div id="emptyComposerMount"></div>
+          <!-- Danh sách cuộn: Customizations + Pinned Conversations + Projects -->
+          <div class="flex-1 overflow-y-auto px-3 py-2 space-y-3 no-scrollbar">
+            <!-- Hàng Customizations chuẩn ảnh chụp antigravity.google.com -->
+            <button
+              type="button"
+              onclick="openCustomizationsModal()"
+              class="w-full px-2 py-2 rounded-xl hover:bg-white/[0.04] flex items-center gap-3 text-[15px] text-[#c4c7c5] font-normal transition-colors cursor-pointer"
+            >
+              <svg class="w-[18px] h-[18px] text-[#9aa0a6] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <rect width="20" height="5" x="2" y="3" rx="1"/>
+                <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/>
+                <path d="M10 12h4"/>
+              </svg>
+              <span>Customizations</span>
+            </button>
+
+            <!-- Mobile Pinned Conversations -->
+            <div id="mobilePinnedSectionWrap" class="hidden space-y-1">
+              <div class="px-2 text-[13px] text-[#9aa0a6] font-normal">Pinned Conversations</div>
+              <div id="mobilePinnedListContainer" class="space-y-0.5"></div>
+            </div>
+
+            <!-- Mobile Projects Tree -->
+            <div class="space-y-1.5">
+              <div class="px-2 flex items-center justify-between">
+                <div class="flex items-center gap-1 text-[13px] text-[#9aa0a6]">
+                  <span>Projects</span>
+                  <svg class="w-3.5 h-3.5 text-[#9aa0a6]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+                </div>
+                <div class="flex items-center gap-3">
+                  <button
+                    type="button"
+                    id="btnMobileFilterUnread"
+                    onclick="toggleFilterUnread()"
+                    title="Filter running or unread"
+                    class="p-1 rounded text-[#9aa0a6] hover:text-white cursor-pointer"
+                  >
+                    <svg class="w-[16px] h-[16px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18"/><path d="M7 12h10"/><path d="M10 18h4"/></svg>
+                  </button>
+                  <button
+                    type="button"
+                    onclick="openSelectProjectModal()"
+                    title="Select workspace project"
+                    class="p-1 rounded text-[#9aa0a6] hover:text-white cursor-pointer"
+                  >
+                    <svg class="w-[16px] h-[16px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              <div id="mobileProjectsTreeContainer" class="space-y-3 pb-2"></div>
+            </div>
+          </div>
+
+          <!-- Khung nhập Prompt 2 dòng cố định ở đáy màn hình Mobile Home -->
+          <div class="px-3 pb-3 pt-1.5 bg-[#1e1f1c] shrink-0">
+            <div id="mobileHomeComposerMount"></div>
+          </div>
+        </div>
+
+        <!-- 1B. GIAO DIỆN DESKTOP NEW CONVERSATION (>=768px): Căn giữa màn hình chuẩn Antigravity Desktop -->
+        <div class="hidden md:flex flex-1 flex-col items-center justify-center px-4 sm:px-6 pb-16 overflow-y-auto">
+          <div class="w-full max-w-[660px]">
+            <!-- Nút chọn thư mục Project phía trên khung nhập: 📁 AG ⌄ -->
+            <div class="mb-2 flex items-center relative">
+              <button
+                type="button"
+                onclick="toggleProjectDropdown(event)"
+                class="flex items-center gap-1.5 px-2 py-1 rounded-md text-[13px] text-[#5f6368] hover:text-[#1f1f1f] hover:bg-black/[0.04] transition-colors cursor-pointer"
+              >
+                <svg class="w-[15px] h-[15px] text-[#787878]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+                </svg>
+                <span id="selectedProjectLabel">AG</span>
+                <svg class="w-3.5 h-3.5 text-[#787878]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="m6 9 6 6 6-6"/>
+                </svg>
+              </button>
+
+              <!-- Dropdown chọn Project -->
+              <div id="projectDropdownMenu" class="hidden absolute left-0 top-full mt-1 w-64 rounded-xl bg-white border border-[#dfdfd8] shadow-xl py-1.5 z-50 max-h-64 overflow-y-auto thin-scroll">
+                <div class="px-3 py-1 text-xs font-medium text-[#787878]">Select Workspace Project</div>
+                <div id="projectDropdownItems"></div>
+              </div>
+            </div>
+
+            <!-- Khung Composer 2 tầng chuẩn Antigravity sẽ được gắn vào đây khi ở Empty State trên Desktop -->
+            <div id="emptyComposerMount"></div>
+          </div>
         </div>
       </div>
 
       <!-- ================================================================= -->
       <!-- TRẠNG THÁI 2: MÀN HÌNH HỘI THOẠI ĐANG MỞ (STREAM REALTIME)        -->
       <!-- ================================================================= -->
-      <div id="activeConvView" class="hidden flex-1 flex flex-col min-h-0 overflow-hidden">
+      <div id="activeConvView" class="hidden flex-1 flex flex-col min-h-0 overflow-hidden relative bg-[#1e1f1c] md:bg-[#f9f9f8]">
         <!-- Dòng chảy tin nhắn & bước chạy Tool -->
-        <div id="messagesScrollArea" class="flex-1 overflow-y-auto px-4 sm:px-6 py-4 thin-scroll">
+        <div id="messagesScrollArea" onscroll="handleMessagesScroll(this)" class="flex-1 overflow-y-auto px-3.5 sm:px-6 py-4 thin-scroll">
           <div id="messagesListContainer" class="max-w-[740px] mx-auto space-y-5 pb-6"></div>
         </div>
 
-        <!-- Khung Composer 2 tầng gắn cố định ở đáy khi đang xem hội thoại -->
-        <div class="px-4 sm:px-6 pb-4 pt-2 bg-[#f9f9f8] shrink-0">
+        <!-- Nút nổi (↓) cuộn nhanh xuống đáy chuẩn antigravity.google.com Mobile -->
+        <button
+          type="button"
+          id="scrollToBottomBtn"
+          onclick="scrollMessagesToBottom()"
+          title="Scroll to bottom"
+          class="hidden absolute left-1/2 -translate-x-1/2 bottom-[104px] z-20 w-9 h-9 rounded-full bg-[#2b2c29]/95 md:bg-white border border-[#444642] md:border-[#dfdfd8] text-[#e3e3e3] md:text-[#1f1f1f] shadow-lg flex items-center justify-center transition-all cursor-pointer"
+        >
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>
+          </svg>
+        </button>
+
+        <!-- Khung Composer gắn cố định ở đáy khi đang xem hội thoại -->
+        <div class="px-3 sm:px-6 pb-3 md:pb-4 pt-1.5 md:pt-2 bg-[#1e1f1c] md:bg-[#f9f9f8] shrink-0">
           <div id="bottomComposerMount" class="max-w-[680px] mx-auto"></div>
         </div>
       </div>
@@ -436,32 +636,32 @@
   </div>
 
   <!-- ===================================================================== -->
-  <!-- COMPONENT COMPOSER 2 TẦNG DÙNG CHUNG (DI CHUYỂN GIỮA EMPTY & BOTTOM)  -->
+  <!-- COMPONENT COMPOSER DÙNG CHUNG (MOBILE 2-ROW CARD & DESKTOP 2-LAYER)   -->
   <!-- ===================================================================== -->
   <div id="sharedComposerTemplate" class="hidden">
     <div id="sharedComposerRoot" class="relative w-full">
       <!-- Popup Slash Commands (/) -->
-      <div id="slashMenuPopover" class="hidden absolute bottom-full left-0 right-0 mb-2 rounded-xl bg-white border border-[#dfdfd8] shadow-xl py-1.5 max-h-56 overflow-y-auto z-50 thin-scroll">
-        <div class="px-3.5 py-1 text-xs font-medium uppercase tracking-wider text-[#787878]">Actions &amp; Workflows</div>
+      <div id="slashMenuPopover" class="hidden absolute bottom-full left-0 right-0 mb-2 rounded-2xl md:rounded-xl bg-[#282926] md:bg-white border border-[#3a3b38] md:border-[#dfdfd8] shadow-2xl py-1.5 max-h-56 overflow-y-auto z-50 thin-scroll">
+        <div class="px-3.5 py-1 text-xs font-medium uppercase tracking-wider text-[#9aa0a6] md:text-[#787878]">Actions &amp; Workflows</div>
         <div id="slashMenuItems"></div>
       </div>
 
       <!-- Popup Mention Project (@) -->
-      <div id="mentionMenuPopover" class="hidden absolute bottom-full left-0 right-0 mb-2 rounded-xl bg-white border border-[#dfdfd8] shadow-xl py-1.5 max-h-56 overflow-y-auto z-50 thin-scroll">
-        <div class="px-3.5 py-1 text-xs font-medium uppercase tracking-wider text-[#787878]">Mention Project / Context</div>
+      <div id="mentionMenuPopover" class="hidden absolute bottom-full left-0 right-0 mb-2 rounded-2xl md:rounded-xl bg-[#282926] md:bg-white border border-[#3a3b38] md:border-[#dfdfd8] shadow-2xl py-1.5 max-h-56 overflow-y-auto z-50 thin-scroll">
+        <div class="px-3.5 py-1 text-xs font-medium uppercase tracking-wider text-[#9aa0a6] md:text-[#787878]">Mention Project / Context</div>
         <div id="mentionMenuItems"></div>
       </div>
 
-      <!-- Khung 2 tầng: Tầng trên trắng (#ffffff), tầng dưới xám nhạt (#efefef) -->
+      <!-- Khung ngoài: Mobile bo tròn 24px màu tối #252624 chuẩn antigravity.google.com | Desktop 2 tầng sáng -->
       <div
         id="composerOuterBox"
         ondragover="event.preventDefault(); this.classList.add('ring-2','ring-[#1967d2]/30');"
         ondragleave="this.classList.remove('ring-2','ring-[#1967d2]/30');"
         ondrop="handleDropMedia(event)"
-        class="rounded-[16px] bg-[#efefef] border border-[#e3e3e0] transition-all shadow-[0_2px_10px_rgba(0,0,0,0.03)]"
+        class="rounded-[24px] md:rounded-[16px] bg-[#252624] md:bg-[#efefef] border border-[#3a3b38] md:border-[#e3e3e0] transition-all shadow-[0_6px_24px_rgba(0,0,0,0.45)] md:shadow-[0_2px_10px_rgba(0,0,0,0.03)]"
       >
-        <!-- Tầng 1: Khung trắng chứa Textarea + hàng nút điều khiển -->
-        <div class="bg-white rounded-[15px] px-4 pt-3.5 pb-2.5 border-b border-[#e5e5e2]">
+        <!-- Tầng 1: Khung chứa Textarea + hàng nút điều khiển -->
+        <div class="bg-transparent md:bg-white rounded-[23px] md:rounded-[15px] px-4 pt-3 md:pt-3.5 pb-2.5 border-0 md:border-b md:border-[#e5e5e2]">
           <!-- Danh sách ảnh/file đính kèm -->
           <div id="composerAttachmentsRow" class="hidden flex items-center gap-2 pb-2.5 overflow-x-auto thin-scroll"></div>
 
@@ -472,37 +672,37 @@
             onpaste="handlePasteMedia(event)"
             onkeydown="if(event.key==='Enter' && !event.shiftKey){ event.preventDefault(); submitPrompt(); }"
             placeholder="Ask anything, @ to mention, / for actions"
-            class="w-full bg-transparent text-[#1f1f1f] placeholder-[#8e8e8e] text-[14px] leading-relaxed outline-none resize-none max-h-36 min-h-[28px]"
+            class="w-full bg-transparent text-[#e3e3e3] md:text-[#1f1f1f] placeholder-[#8e918f] md:placeholder-[#8e8e8e] text-[16px] md:text-[14px] leading-relaxed outline-none resize-none max-h-32 md:max-h-36 min-h-[26px] md:min-h-[28px]"
           ></textarea>
 
-          <!-- Hàng nút bên trong khung trắng: [+] [Gemini 4 Argon High ⌄] ... [🛡️ Turbo ⌄] [🎤] [→] -->
-          <div class="mt-3 flex items-center justify-between gap-2">
+          <!-- Hàng nút: Mobile [+] [Gemini 4 Argon High ^] ... [🎤] [→/⏹] | Desktop thêm [🛡️ Turbo ⌄] -->
+          <div class="mt-2.5 md:mt-3 flex items-center justify-between gap-2">
             <!-- Bên trái: Nút [+] và chọn Model -->
             <div class="flex items-center gap-1.5 min-w-0 relative">
               <button
                 type="button"
                 onclick="document.getElementById('hiddenFileInput').click()"
                 title="Add attachment or image"
-                class="p-1 rounded-md text-[#6e6e6e] hover:text-[#1f1f1f] hover:bg-black/[0.04] transition-colors shrink-0 cursor-pointer"
+                class="p-1.5 md:p-1 rounded-full md:rounded-md text-[#b8bcb7] md:text-[#6e6e6e] hover:text-white md:hover:text-[#1f1f1f] hover:bg-white/[0.06] md:hover:bg-black/[0.04] transition-colors shrink-0 cursor-pointer"
               >
-                <svg class="w-[16px] h-[16px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg class="w-[18px] h-[18px] md:w-[16px] md:h-[16px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M5 12h14"/><path d="M12 5v14"/>
                 </svg>
               </button>
 
               <button
                 type="button"
-                onclick="toggleModelPopover(event)"
-                class="flex items-center gap-1.5 py-1 px-2 rounded-md hover:bg-black/[0.04] transition-colors truncate cursor-pointer"
+                onclick="toggleModelSelector(event)"
+                class="flex items-center gap-1.5 py-1 px-2 rounded-lg md:rounded-md hover:bg-white/[0.06] md:hover:bg-black/[0.04] transition-colors truncate cursor-pointer"
               >
-                <span id="selectedModelNameLabel" class="text-[12.5px] text-[#3c3c3c] font-normal truncate">Gemini 4 Argon</span>
-                <span id="selectedModelTierLabel" class="text-[12.5px] text-[#8e8e8e] font-normal shrink-0">High</span>
-                <svg class="w-3.5 h-3.5 text-[#8e8e8e] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="m6 9 6 6 6-6"/>
-                </svg>
+                <span id="selectedModelNameLabel" class="text-[13.5px] md:text-[12.5px] text-[#c4c7c5] md:text-[#3c3c3c] font-normal truncate">Gemini 4 Argon</span>
+                <span id="selectedModelTierLabel" class="text-[13.5px] md:text-[12.5px] text-[#8e918f] md:text-[#8e8e8e] font-normal shrink-0">High</span>
+                <!-- Mobile chevron up (^), Desktop chevron down (⌄) -->
+                <svg class="w-3.5 h-3.5 text-[#8e918f] shrink-0 md:hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg>
+                <svg class="hidden md:block w-3.5 h-3.5 text-[#8e8e8e] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
               </button>
 
-              <!-- Menu chọn Model -->
+              <!-- Menu chọn Model trên Desktop -->
               <div id="modelMenuPopover" class="hidden absolute left-6 bottom-full mb-2 w-72 rounded-xl bg-white border border-[#dfdfd8] shadow-xl py-1.5 z-50 max-h-72 overflow-y-auto thin-scroll">
                 <div class="px-3.5 py-1 text-xs font-medium text-[#787878] flex items-center justify-between">
                   <span>Model</span>
@@ -512,16 +712,15 @@
               </div>
             </div>
 
-            <!-- Bên phải: [🛡️ Turbo ⌄]  [🎤]  [→] -->
+            <!-- Bên phải: [🛡️ Turbo ⌄ (Desktop)]  [🎤]  [→/⏹] -->
             <div class="flex items-center gap-2 shrink-0 relative">
-              <!-- Chọn chế độ Turbo / Auto / Ask -->
-              <div class="relative">
+              <!-- Chọn chế độ Turbo / Auto / Ask (Chỉ hiện trên Desktop) -->
+              <div class="hidden md:block relative">
                 <button
                   type="button"
                   onclick="toggleExecModePopover(event)"
                   class="flex items-center gap-1.5 px-2 py-1 rounded-md text-[12.5px] text-[#5f6368] hover:text-[#1f1f1f] hover:bg-black/[0.04] transition-colors cursor-pointer"
                 >
-                  <!-- ShieldCheck Icon -->
                   <svg class="w-[14px] h-[14px] text-[#6e6e6e]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>
                     <path d="m9 12 2 2 4-4"/>
@@ -560,43 +759,42 @@
                 id="voiceMicBtn"
                 onclick="toggleVoiceInput()"
                 title="Voice input (Tiếng Việt)"
-                class="p-1.5 rounded-full text-[#6e6e6e] hover:text-[#1f1f1f] hover:bg-black/[0.04] transition-colors cursor-pointer"
+                class="p-2 md:p-1.5 rounded-full text-[#b8bcb7] md:text-[#6e6e6e] hover:text-white md:hover:text-[#1f1f1f] hover:bg-white/[0.06] md:hover:bg-black/[0.04] transition-colors cursor-pointer"
               >
-                <svg class="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <svg class="w-[17px] h-[17px] md:w-[15px] md:h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
                   <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
                   <line x1="12" x2="12" y1="19" y2="22"/>
                 </svg>
               </button>
 
-              <!-- Nút Gửi [→] hoặc Dừng [⏹] -->
+              <!-- Nút Gửi [→] hoặc Dừng [⏹] (Mobile 36x36 tròn chuẩn antigravity.google.com) -->
               <button
                 type="button"
                 id="composerSubmitBtn"
                 onclick="handleSubmitOrStop()"
                 title="Submit"
-                class="w-7 h-7 rounded-full bg-[#e4e4e2] text-[#6e6e6e] flex items-center justify-center transition-all cursor-pointer"
+                class="w-9 h-9 md:w-7 md:h-7 rounded-full bg-[#333531] md:bg-[#e4e4e2] text-[#8e918f] md:text-[#6e6e6e] flex items-center justify-center transition-all cursor-pointer"
               >
-                <svg id="submitArrowIcon" class="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg id="submitArrowIcon" class="w-[17px] h-[17px] md:w-[15px] md:h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
                 </svg>
-                <svg id="stopSquareIcon" class="hidden w-3 h-3 fill-current" viewBox="0 0 24 24">
-                  <rect width="16" height="16" x="4" y="4" rx="2"/>
+                <svg id="stopSquareIcon" class="hidden w-3.5 h-3.5 md:w-3 md:h-3 fill-current" viewBox="0 0 24 24">
+                  <rect width="14" height="14" x="5" y="5" rx="2"/>
                 </svg>
               </button>
             </div>
           </div>
         </div>
 
-        <!-- Tầng 2: Thanh đáy xám nhạt chứa [💻 Local ⌄] -->
-        <div class="px-3.5 py-1.5 flex items-center justify-between text-[12px] text-[#5f6368] relative">
+        <!-- Tầng 2 (Chỉ hiện trên Desktop): Thanh đáy xám nhạt chứa [💻 Local ⌄] -->
+        <div class="hidden md:flex px-3.5 py-1.5 items-center justify-between text-[12px] text-[#5f6368] relative">
           <div class="relative">
             <button
               type="button"
               onclick="toggleEnvModePopover(event)"
               class="flex items-center gap-1.5 px-1.5 py-0.5 rounded hover:bg-black/[0.04] hover:text-[#1f1f1f] transition-colors cursor-pointer"
             >
-              <!-- Laptop Icon -->
               <svg class="w-[13.5px] h-[13.5px] text-[#6e6e6e]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16"/>
               </svg>
@@ -627,6 +825,31 @@
             <span id="composerWsText">Realtime WS synced</span>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MOBILE MODEL SELECTION BOTTOM SHEET (CHUẨN ANTIGRAVITY.GOOGLE.COM)    -->
+  <!-- ===================================================================== -->
+  <div id="mobileModelSheetModal" onclick="closeMobileModelSheet()" class="hidden fixed inset-0 bg-black/60 z-50 flex items-end justify-center md:hidden">
+    <div onclick="event.stopPropagation()" class="w-full rounded-t-[24px] bg-[#222321] border-t border-[#3a3b38] pt-2.5 pb-5 text-[#e3e3e3] shadow-2xl">
+      <!-- Thanh kéo trên đỉnh Bottom Sheet -->
+      <div class="w-10 h-1 rounded-full bg-[#5a5c58] mx-auto mb-3"></div>
+      <div class="px-5 pb-2 text-[14px] text-[#9aa0a6] font-normal">Model</div>
+      <div id="mobileModelSheetItems" class="divide-y divide-white/[0.04] max-h-[60vh] overflow-y-auto no-scrollbar"></div>
+      <div class="mt-2 pt-2 border-t border-white/[0.08] px-5">
+        <button
+          type="button"
+          onclick="closeMobileModelSheet(); openSettingsModal('general');"
+          class="w-full py-2.5 flex items-center justify-between text-[14.5px] text-[#c4c7c5] hover:text-white cursor-pointer"
+        >
+          <span class="flex items-center gap-2.5">
+            <svg class="w-4 h-4 text-[#9aa0a6]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>
+            <span>View Usage</span>
+          </span>
+          <svg class="w-4 h-4 text-[#8e918f]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
       </div>
     </div>
   </div>
@@ -862,13 +1085,62 @@
         .replace(/"/g, '&quot;');
     }
 
+    function isMobileViewport() {
+      return window.innerWidth < 768;
+    }
+
     function mountComposerTo(targetMountId) {
       const root = document.getElementById('sharedComposerRoot');
-      const mount = document.getElementById(targetMountId);
+      let resolvedId = targetMountId;
+      if (targetMountId === 'emptyComposerMount' && isMobileViewport()) {
+        resolvedId = 'mobileHomeComposerMount';
+      }
+      const mount = document.getElementById(resolvedId);
       if (root && mount && root.parentElement !== mount) {
         mount.appendChild(root);
       }
     }
+
+    // Khóa cứng khung nhìn theo window.visualViewport trên Mobile (<768px)
+    // để thanh địa chỉ dưới của Chrome iOS và bàn phím ảo không bao giờ che mất khung nhập Prompt
+    let lastVvHeight = window.innerHeight;
+    function syncMobileVisualViewport() {
+      const vv = window.visualViewport;
+      if (isMobileViewport() && vv) {
+        const h = Math.round(vv.height);
+        const top = Math.max(0, Math.round(vv.offsetTop));
+        document.body.style.position = 'fixed';
+        document.body.style.left = '0px';
+        document.body.style.right = '0px';
+        document.body.style.top = top + 'px';
+        document.body.style.height = h + 'px';
+        document.body.style.width = '100%';
+        if (window.scrollY !== 0) {
+          window.scrollTo(0, 0);
+        }
+        if (lastVvHeight - h > 80 && activeConversationId) {
+          setTimeout(() => scrollMessagesToBottom(), 40);
+        }
+        lastVvHeight = h;
+      } else {
+        document.body.style.position = '';
+        document.body.style.left = '';
+        document.body.style.right = '';
+        document.body.style.top = '';
+        document.body.style.height = '';
+        document.body.style.width = '';
+      }
+      if (!activeConversationId) {
+        mountComposerTo('emptyComposerMount');
+      }
+    }
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', syncMobileVisualViewport);
+      window.visualViewport.addEventListener('scroll', syncMobileVisualViewport);
+    }
+    window.addEventListener('resize', syncMobileVisualViewport);
+    window.addEventListener('orientationchange', () => setTimeout(syncMobileVisualViewport, 100));
 
     async function apiFetch(path, options = {}) {
       const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
@@ -932,17 +1204,23 @@
     function updateWsStatusUi(connected) {
       wsConnected = connected;
       const hostDot = document.getElementById('hostStatusDot');
+      const mobHostDot = document.getElementById('mobileHostStatusDot');
       const wsBadge = document.getElementById('wsRealtimeBadge');
+      const mobWsBadge = document.getElementById('mobileWsRealtimeBadge');
       const compDot = document.getElementById('composerWsDot');
       const compTxt = document.getElementById('composerWsText');
       if (connected) {
         if (hostDot) hostDot.className = 'w-2 h-2 rounded-full bg-[#2e7d32] shrink-0';
+        if (mobHostDot) mobHostDot.className = 'w-2 h-2 rounded-full bg-[#34a853] shrink-0';
         if (wsBadge) { wsBadge.textContent = '● WS Realtime'; wsBadge.className = 'text-[#2e7d32] font-semibold'; }
+        if (mobWsBadge) { mobWsBadge.textContent = '● WS Realtime'; mobWsBadge.className = 'text-[#34a853] font-semibold'; }
         if (compDot) compDot.className = 'w-1.5 h-1.5 rounded-full bg-[#2e7d32]';
         if (compTxt) compTxt.textContent = 'Realtime WS synced';
       } else {
         if (hostDot) hostDot.className = 'w-2 h-2 rounded-full bg-[#fbbc04] shrink-0';
+        if (mobHostDot) mobHostDot.className = 'w-2 h-2 rounded-full bg-[#fbbc04] shrink-0';
         if (wsBadge) { wsBadge.textContent = '○ Reconnecting...'; wsBadge.className = 'text-[#fbbc04] font-semibold'; }
+        if (mobWsBadge) { mobWsBadge.textContent = '○ Reconnecting...'; mobWsBadge.className = 'text-[#fbbc04] font-semibold'; }
         if (compDot) compDot.className = 'w-1.5 h-1.5 rounded-full bg-[#fbbc04]';
         if (compTxt) compTxt.textContent = 'Syncing...';
       }
@@ -1018,6 +1296,8 @@
       const hName = (data.host && data.host.name) || 'vudanhdu-cosmic-spark';
       document.getElementById('hostNameLabel').textContent = hName;
       document.getElementById('custHostLabel').textContent = hName;
+      const mobHostEl = document.getElementById('mobileHostNameLabel');
+      if (mobHostEl) mobHostEl.textContent = hName;
 
       if (Array.isArray(data.models) && data.models.length > 0) {
         const found = data.models.find(m => m.id === selectedModel.id) || data.models[0];
@@ -1066,10 +1346,14 @@
     function renderPinnedConversations() {
       const wrap = document.getElementById('pinnedSectionWrap');
       const container = document.getElementById('pinnedListContainer');
+      const mobWrap = document.getElementById('mobilePinnedSectionWrap');
+      const mobContainer = document.getElementById('mobilePinnedListContainer');
       const pinned = filterConversations(overviewData.pinnedConversations || []);
       if (pinned.length === 0) {
         wrap.classList.add('hidden');
         container.innerHTML = '';
+        if (mobWrap) mobWrap.classList.add('hidden');
+        if (mobContainer) mobContainer.innerHTML = '';
         return;
       }
       wrap.classList.remove('hidden');
@@ -1091,13 +1375,37 @@
           </div>
         `;
       }).join('');
+
+      if (mobWrap && mobContainer) {
+        mobWrap.classList.remove('hidden');
+        mobContainer.innerHTML = pinned.map(conv => {
+          const isActive = activeConversationId === conv.id;
+          return `
+            <div
+              onclick="openConversation('${escapeHtml(conv.id)}', '${escapeHtml(conv.projectId)}', '${escapeHtml(conv.projectName)}')"
+              class="px-2.5 py-2 rounded-xl cursor-pointer transition-colors ${isActive ? 'bg-white/[0.08] font-medium text-white' : 'hover:bg-white/[0.04]'}"
+            >
+              <div class="flex items-baseline justify-between gap-2">
+                <span class="text-[14.5px] text-[#e3e3e3] leading-snug truncate">${escapeHtml(conv.title)}</span>
+                <span class="text-[12.5px] text-[#9aa0a6] shrink-0 tabular-nums">${escapeHtml(conv.relativeTime || '')}</span>
+              </div>
+              <div class="mt-0.5 flex items-center gap-1.5 text-[12.5px] text-[#9aa0a6]">
+                <svg class="w-3.5 h-3.5 text-[#9aa0a6] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+                <span class="truncate">${escapeHtml(conv.projectName)}</span>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
     }
 
     function renderProjectsTree() {
       const container = document.getElementById('projectsTreeContainer');
+      const mobContainer = document.getElementById('mobileProjectsTreeContainer');
       const projs = overviewData.projects || [];
       if (projs.length === 0) {
         container.innerHTML = `<div class="px-2 py-4 text-xs text-[#787878]">Đang đồng bộ danh sách dự án...</div>`;
+        if (mobContainer) mobContainer.innerHTML = `<div class="px-2 py-4 text-xs text-[#9aa0a6]">Đang đồng bộ danh sách dự án...</div>`;
         return;
       }
 
@@ -1184,6 +1492,87 @@
           </div>
         `;
       }).join('');
+
+      if (mobContainer) {
+        mobContainer.innerHTML = projs.map(proj => {
+          const isCollapsed = !!collapsedProjects[proj.id];
+          const isExpandedAll = !!expandedSeeAllProjects[proj.id];
+          const filtered = filterConversations(proj.conversations || []);
+          const defaultLimit = (proj.name === 'AG' || proj.id === 'e3009192-6136-4652-a8f6-1f1238312ad6') ? 6 : 4;
+          const visibleConvs = isExpandedAll ? filtered : filtered.slice(0, defaultLimit);
+          const totalCount = proj.totalCount || filtered.length;
+
+          const mobConvRowsHtml = !isCollapsed ? `
+            <div class="space-y-0.5">
+              ${visibleConvs.map(conv => {
+                const isActive = activeConversationId === conv.id;
+                const displayTitle = conv.workspaceTag
+                  ? `Claude giao · ${conv.workspaceTag} · ${conv.title}`
+                  : conv.title;
+
+                let rightIndicator = `<span class="text-[13px] text-[#9aa0a6] font-normal tabular-nums">${escapeHtml(conv.relativeTime || '')}</span>`;
+                if (conv.isRunning && !isActive) {
+                  rightIndicator = `
+                    <svg class="animate-spin-arc w-[15px] h-[15px] text-[#9aa0a6]" viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-opacity="0.2" stroke-width="2.2"/>
+                      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                    </svg>
+                  `;
+                } else if (conv.unread && !isActive) {
+                  rightIndicator = `<span class="inline-block w-2 h-2 rounded-full bg-[#e91e63]"></span>`;
+                }
+
+                return `
+                  <div
+                    onclick="openConversation('${escapeHtml(conv.id)}', '${escapeHtml(proj.id)}', '${escapeHtml(proj.name)}')"
+                    class="flex items-center justify-between pl-7 pr-2 py-2.5 rounded-xl cursor-pointer transition-colors gap-3 ${
+                      isActive ? 'bg-white/[0.08] font-medium text-white' : 'text-[#c4c7c5] hover:bg-white/[0.04]'
+                    }"
+                  >
+                    <span class="text-[15px] leading-snug truncate">${escapeHtml(displayTitle)}</span>
+                    <div class="shrink-0 flex items-center justify-end min-w-[24px]">
+                      ${rightIndicator}
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+
+              ${totalCount > defaultLimit ? `
+                <button
+                  type="button"
+                  onclick="toggleSeeAllProject('${escapeHtml(proj.id)}')"
+                  class="pl-7 pr-2 py-1.5 text-[13.5px] text-[#8e918f] hover:text-white transition-colors block text-left cursor-pointer"
+                >
+                  ${isExpandedAll ? 'Show less' : `See all (${totalCount})`}
+                </button>
+              ` : ''}
+            </div>
+          ` : '';
+
+          return `
+            <div class="space-y-1">
+              <div
+                onclick="toggleCollapseProject('${escapeHtml(proj.id)}')"
+                class="flex items-center justify-between px-2 py-1.5 rounded-xl hover:bg-white/[0.04] cursor-pointer transition-colors"
+              >
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <svg class="w-[17px] h-[17px] text-[#9aa0a6] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+                  <span class="text-[15px] text-[#c4c7c5] truncate">${escapeHtml(proj.name)}</span>
+                </div>
+                <button
+                  type="button"
+                  onclick="event.stopPropagation(); selectProjectAndStartNew('${escapeHtml(proj.id)}', '${escapeHtml(proj.name)}')"
+                  title="New conversation in ${escapeHtml(proj.name)}"
+                  class="p-1 rounded-lg text-[#9aa0a6] hover:text-white hover:bg-white/[0.06] cursor-pointer"
+                >
+                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                </button>
+              </div>
+              ${mobConvRowsHtml}
+            </div>
+          `;
+        }).join('');
+      }
     }
 
     function toggleCollapseProject(pid) {
@@ -1200,6 +1589,8 @@
       filterUnreadOnly = !filterUnreadOnly;
       const btn = document.getElementById('btnFilterUnread');
       btn.className = `p-0.5 rounded hover:bg-black/[0.05] transition-colors cursor-pointer ${filterUnreadOnly ? 'text-[#3b82f6]' : 'text-[#787878]'}`;
+      const mobBtn = document.getElementById('btnMobileFilterUnread');
+      if (mobBtn) mobBtn.className = `p-1 rounded cursor-pointer ${filterUnreadOnly ? 'text-[#8ab4f8]' : 'text-[#9aa0a6]'}`;
       renderPinnedConversations();
       renderProjectsTree();
     }
@@ -1212,6 +1603,15 @@
       }
     }
 
+    function toggleMobileSearchBar() {
+      const box = document.getElementById('mobileHomeSearchBox');
+      if (!box) return;
+      box.classList.toggle('hidden');
+      if (!box.classList.contains('hidden')) {
+        document.getElementById('mobileHomeSearchInput')?.focus();
+      }
+    }
+
     function handleSearchInput(val) {
       searchQuery = val || '';
       renderPinnedConversations();
@@ -1221,6 +1621,8 @@
     function clearSearchInput() {
       searchQuery = '';
       document.getElementById('sidebarSearchInput').value = '';
+      const mobInp = document.getElementById('mobileHomeSearchInput');
+      if (mobInp) mobInp.value = '';
       renderPinnedConversations();
       renderProjectsTree();
     }
@@ -1233,6 +1635,8 @@
       activeConversation = null;
       prevMsgSig = '';
       document.getElementById('activeConvHeaderBar').classList.add('hidden');
+      document.getElementById('mobileConvHeaderBar')?.classList.add('hidden');
+      document.getElementById('mobileHomeHeaderBar')?.classList.remove('hidden');
       document.getElementById('activeConvView').classList.add('hidden');
       document.getElementById('emptyStateView').classList.remove('hidden');
       mountComposerTo('emptyComposerMount');
@@ -1242,7 +1646,9 @@
       if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
         try { wsInstance.send(JSON.stringify({ type: 'subscribe', conversationId: null })); } catch (e) {}
       }
-      setTimeout(() => document.getElementById('composerTextarea')?.focus(), 60);
+      if (!isMobileViewport()) {
+        setTimeout(() => document.getElementById('composerTextarea')?.focus(), 60);
+      }
     }
 
     function selectProjectAndStartNew(pid, pname) {
@@ -1252,6 +1658,17 @@
       closeAllPopovers();
       closeSelectProjectModal();
       startNewConversation();
+      setTimeout(() => document.getElementById('composerTextarea')?.focus(), 80);
+    }
+
+    async function refreshActiveConversationNow() {
+      if (!activeConversationId || activeConversationId.startsWith('pending_')) return;
+      try {
+        const detail = await apiFetch(`/api/ag-companion/conversation/${encodeURIComponent(activeConversationId)}?markRead=1`);
+        activeConversation = detail;
+        renderActiveConversation();
+        showToast('Đã làm mới nội dung hội thoại');
+      } catch (e) {}
     }
 
     async function openConversation(cid, projId, projName) {
@@ -1268,6 +1685,8 @@
       document.getElementById('emptyStateView').classList.add('hidden');
       document.getElementById('activeConvView').classList.remove('hidden');
       document.getElementById('activeConvHeaderBar').classList.remove('hidden');
+      document.getElementById('mobileHomeHeaderBar')?.classList.add('hidden');
+      document.getElementById('mobileConvHeaderBar')?.classList.remove('hidden');
       mountComposerTo('bottomComposerMount');
       toggleMobileSidebar(false);
 
@@ -1286,8 +1705,8 @@
 
       if (!cid.startsWith('pending_')) {
         document.getElementById('messagesListContainer').innerHTML = `
-          <div class="py-20 flex flex-col items-center justify-center gap-2.5 text-[#787878]">
-            <svg class="animate-spin-arc w-6 h-6 text-[#1967d2]" viewBox="0 0 24 24" fill="none">
+          <div class="py-20 flex flex-col items-center justify-center gap-2.5 text-[#9aa0a6] md:text-[#787878]">
+            <svg class="animate-spin-arc w-6 h-6 text-[#8ab4f8] md:text-[#1967d2]" viewBox="0 0 24 24" fill="none">
               <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-opacity="0.18" stroke-width="2.2"/>
               <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
             </svg>
@@ -1317,8 +1736,8 @@
           const codeBody = nl > -1 ? seg.slice(nl + 1, -3) : seg.slice(3, -3);
           const codeId = `code_${msgId}_${idx}`;
           return `
-            <div class="my-2.5 rounded-xl overflow-hidden border border-[#e0e0de] bg-[#1e1e1e]">
-              <div class="flex items-center justify-between px-3.5 py-1.5 bg-[#262626] border-b border-[#343434] text-[12px] text-[#a0a0a0] font-mono">
+            <div class="my-2.5 rounded-xl overflow-hidden border border-[#3a3b38] md:border-[#e0e0de] bg-[#161715] md:bg-[#1e1e1e]">
+              <div class="flex items-center justify-between px-3.5 py-1.5 bg-[#222321] md:bg-[#262626] border-b border-[#343434] text-[12px] text-[#a0a0a0] font-mono">
                 <span>${escapeHtml(lang || 'text')}</span>
                 <button
                   type="button"
@@ -1336,22 +1755,22 @@
           if (!trimmed) return '<div class="h-1.5"></div>';
           if (/^(Kế hoạch|Tiến độ):/i.test(trimmed)) {
             return `
-              <div class="my-1.5 px-3 py-2 rounded-lg border bg-[#eef4ff] border-[#d0e0ff] text-[#1967d2] text-[13.5px] font-medium flex items-center gap-2">
+              <div class="my-1.5 px-3 py-2 rounded-lg border bg-[#8ab4f8]/10 md:bg-[#eef4ff] border-[#8ab4f8]/25 md:border-[#d0e0ff] text-[#8ab4f8] md:text-[#1967d2] text-[13.5px] font-medium flex items-center gap-2">
                 <span>✦</span>
                 <span>${escapeHtml(trimmed)}</span>
               </div>
             `;
           }
           if (trimmed.startsWith('### ')) {
-            return `<h4 class="text-[15.5px] font-semibold pt-2 pb-0.5 text-[#111111]">${formatInlineMd(trimmed.slice(4))}</h4>`;
+            return `<h4 class="text-[15.5px] font-semibold pt-2 pb-0.5 text-white md:text-[#111111]">${formatInlineMd(trimmed.slice(4))}</h4>`;
           }
           if (trimmed.startsWith('## ')) {
-            return `<h3 class="text-[16.5px] font-bold pt-2.5 pb-1 text-[#111111]">${formatInlineMd(trimmed.slice(3))}</h3>`;
+            return `<h3 class="text-[16.5px] font-bold pt-2.5 pb-1 text-white md:text-[#111111]">${formatInlineMd(trimmed.slice(3))}</h3>`;
           }
           if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
             return `
               <div class="flex items-start gap-2 pl-1">
-                <span class="text-[#8e8e8e] mt-1.5 text-xs">●</span>
+                <span class="text-[#8e918f] md:text-[#8e8e8e] mt-1.5 text-xs">●</span>
                 <span class="flex-1">${formatInlineMd(trimmed.slice(2))}</span>
               </div>
             `;
@@ -1363,9 +1782,9 @@
 
     function formatInlineMd(text) {
       let s = escapeHtml(text);
-      s = s.replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 mx-0.5 rounded font-mono text-[12.5px] bg-[#ececea] text-[#c5221f]">$1</code>');
-      s = s.replace(/\*\*([^*]+)\*\*/g, '<strong class="font-semibold text-[#111111]">$1</strong>');
-      s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="text-[#1967d2] underline underline-offset-2 break-all">$1</a>');
+      s = s.replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 mx-0.5 rounded font-mono text-[12.5px] bg-[#2e302c] md:bg-[#ececea] text-[#f28b82] md:text-[#c5221f] break-words [overflow-wrap:anywhere]">$1</code>');
+      s = s.replace(/\*\*([^*]+)\*\*/g, '<strong class="font-semibold text-white md:text-[#111111]">$1</strong>');
+      s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="text-[#8ab4f8] md:text-[#1967d2] underline underline-offset-2 break-all">$1</a>');
       return s;
     }
 
@@ -1395,13 +1814,13 @@
             if (!src) return '';
             if ((att.mimeType || '').startsWith('image/')) {
               return `
-                <a href="${escapeHtml(src)}" target="_blank" class="block rounded-xl overflow-hidden border border-black/10 max-w-[280px] max-h-[250px] shadow-xs">
+                <a href="${escapeHtml(src)}" target="_blank" class="block rounded-xl overflow-hidden border border-white/10 md:border-black/10 max-w-[280px] max-h-[250px] shadow-xs">
                   <img src="${escapeHtml(src)}" alt="${escapeHtml(att.name || 'image')}" class="max-w-full max-h-[246px] object-contain bg-black/5" loading="lazy" />
                 </a>
               `;
             }
             return `
-              <a href="${escapeHtml(src)}" target="_blank" class="flex items-center gap-2 px-3 py-2 rounded-xl border bg-white border-[#d8d8d4] text-[#1967d2] text-[12.5px]">
+              <a href="${escapeHtml(src)}" target="_blank" class="flex items-center gap-2 px-3 py-2 rounded-xl border bg-[#282926] md:bg-white border-[#3a3b38] md:border-[#d8d8d4] text-[#8ab4f8] md:text-[#1967d2] text-[12.5px]">
                 <span>📎</span>
                 <span class="truncate max-w-[200px]">${escapeHtml(att.name || 'Attachment')}</span>
               </a>
@@ -1411,25 +1830,50 @@
       `;
     }
 
+    function handleMessagesScroll(el) {
+      const btn = document.getElementById('scrollToBottomBtn');
+      if (!btn || !el) return;
+      const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+      btn.classList.toggle('hidden', dist <= 120);
+    }
+
+    function scrollMessagesToBottom() {
+      const sc = document.getElementById('messagesScrollArea');
+      if (sc) {
+        sc.scrollTo({ top: sc.scrollHeight, behavior: 'smooth' });
+      }
+    }
+
     function renderActiveConversation() {
       if (!activeConversation) return;
+      const titleStr = activeConversation.title || 'Conversation';
       document.getElementById('headerConvProject').textContent = activeConversation.projectName || targetProjectName;
-      document.getElementById('headerConvTitle').textContent = activeConversation.title || 'Conversation';
+      document.getElementById('headerConvTitle').textContent = titleStr;
+      const mobTitle = document.getElementById('mobileHeaderConvTitle');
+      if (mobTitle) mobTitle.textContent = titleStr;
 
       const spinEl = document.getElementById('headerRunningSpinner');
+      const mobSpinEl = document.getElementById('mobileHeaderRunningSpinner');
       const isRun = !!activeConversation.isRunning || isSubmitting;
       spinEl.classList.toggle('hidden', !isRun);
+      if (mobSpinEl) mobSpinEl.classList.toggle('hidden', !isRun);
       updateComposerButtonState();
 
       const pinBtn = document.getElementById('headerPinBtn');
       pinBtn.className = `p-1 rounded-md transition-colors cursor-pointer ${
         activeConversation.pinned ? 'text-[#1967d2] bg-[#eef4ff]' : 'text-[#787878] hover:text-[#1f1f1f] hover:bg-black/[0.04]'
       }`;
+      const mobPinBtn = document.getElementById('mobileHeaderPinBtn');
+      if (mobPinBtn) {
+        mobPinBtn.className = `p-2 rounded-full transition-colors cursor-pointer ${
+          activeConversation.pinned ? 'text-[#8ab4f8] bg-white/[0.08]' : 'text-[#b8bcb7] hover:text-white hover:bg-white/[0.06]'
+        }`;
+      }
 
       const msgs = activeConversation.messages || [];
       const container = document.getElementById('messagesListContainer');
       if (msgs.length === 0) {
-        container.innerHTML = `<div class="py-12 text-center text-[13.5px] text-[#787878]">No steps recorded yet. Enter a message below to continue.</div>`;
+        container.innerHTML = `<div class="py-12 text-center text-[13.5px] text-[#9aa0a6] md:text-[#787878]">No steps recorded yet. Enter a message below to continue.</div>`;
         return;
       }
 
@@ -1437,7 +1881,7 @@
         if (msg.role === 'user') {
           return `
             <div class="flex justify-end">
-              <div class="max-w-[82%] rounded-2xl bg-[#ececea] border border-[#dfdfd8] px-4 py-2.5 text-[14.5px] text-[#1f1f1f] leading-relaxed whitespace-pre-wrap break-words">
+              <div class="max-w-[85%] md:max-w-[82%] rounded-[20px] md:rounded-2xl bg-[#2b2c29] md:bg-[#ececea] border border-[#3a3b38] md:border-[#dfdfd8] px-4 py-2.5 text-[15px] md:text-[14.5px] text-[#e8eaed] md:text-[#1f1f1f] leading-relaxed whitespace-pre-wrap break-words">
                 ${renderMessageMediaHtml(msg)}
                 ${escapeHtml(msg.content || '')}
               </div>
@@ -1447,20 +1891,20 @@
 
         const isThinkOpen = !!expandedThinking[msg.id];
         const thinkHtml = msg.thinking ? `
-          <div class="rounded-xl bg-white border border-[#e3e3e0] overflow-hidden shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+          <div class="rounded-xl bg-[#252624] md:bg-white border border-[#3a3b38] md:border-[#e3e3e0] overflow-hidden shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
             <button
               type="button"
               onclick="toggleThinkingBlock('${escapeHtml(msg.id)}')"
-              class="w-full px-3.5 py-2 flex items-center justify-between text-[12.5px] text-[#5f6368] hover:text-[#1f1f1f] transition-colors cursor-pointer"
+              class="w-full px-3.5 py-2 flex items-center justify-between text-[13px] md:text-[12.5px] text-[#9aa0a6] md:text-[#5f6368] hover:text-white md:hover:text-[#1f1f1f] transition-colors cursor-pointer"
             >
               <span class="flex items-center gap-2">
-                <span class="text-[#1967d2]">✦</span>
-                <span>Thought${msg.thinkingSeconds ? ` for ${msg.thinkingSeconds}s` : ''}</span>
+                <span class="text-[#8ab4f8] md:text-[#1967d2]">✦</span>
+                <span>Worked${msg.thinkingSeconds ? ` for ${msg.thinkingSeconds}s` : ''}</span>
               </span>
-              <span>${isThinkOpen ? '▴' : '▸'}</span>
+              <span>${isThinkOpen ? '▴' : '›'}</span>
             </button>
             ${isThinkOpen ? `
-              <div class="px-3.5 pb-3 pt-1.5 text-[12.5px] text-[#5f6368] border-t border-[#ededeb] whitespace-pre-wrap leading-relaxed font-mono bg-[#fcfcfb]">
+              <div class="px-3.5 pb-3 pt-1.5 text-[12.5px] text-[#9aa0a6] md:text-[#5f6368] border-t border-white/[0.06] md:border-[#ededeb] whitespace-pre-wrap leading-relaxed font-mono bg-[#1b1c1a] md:bg-[#fcfcfb]">
                 ${escapeHtml(msg.thinking)}
               </div>
             ` : ''}
@@ -1476,30 +1920,30 @@
               const isCmd = (tc.name || '').includes('command') || (tc.name || '').includes('terminal');
               const label = tc.summary || tc.path || tc.command || tc.name;
               return `
-                <div class="rounded-xl bg-white border border-[#e3e3e0] overflow-hidden">
+                <div class="rounded-xl bg-[#252624] md:bg-white border border-[#3a3b38] md:border-[#e3e3e0] overflow-hidden">
                   <button
                     type="button"
                     onclick="toggleToolBlock('${escapeHtml(tKey)}')"
-                    class="w-full px-3 py-2 flex items-center justify-between gap-2 text-left text-[12.5px] text-[#3c3c3c] hover:bg-black/[0.02] cursor-pointer"
+                    class="w-full px-3 py-2 flex items-center justify-between gap-2 text-left text-[12.5px] text-[#c4c7c5] md:text-[#3c3c3c] hover:bg-white/[0.03] md:hover:bg-black/[0.02] cursor-pointer"
                   >
                     <div class="flex items-center gap-2 min-w-0">
-                      <span class="text-xs font-mono px-1.5 py-0.5 rounded ${isCmd ? 'bg-[#eef4ff] text-[#1967d2]' : 'bg-[#e6f4ea] text-[#188038]'} shrink-0">
+                      <span class="text-xs font-mono px-1.5 py-0.5 rounded ${isCmd ? 'bg-[#8ab4f8]/15 md:bg-[#eef4ff] text-[#8ab4f8] md:text-[#1967d2]' : 'bg-[#81c995]/15 md:bg-[#e6f4ea] text-[#81c995] md:text-[#188038]'} shrink-0">
                         ${isCmd ? '>_ CMD' : 'FILE'}
                       </span>
                       <span class="truncate font-mono">${escapeHtml(label)}</span>
                     </div>
                     <div class="flex items-center gap-1.5 shrink-0">
                       ${tc.status === 'running' ? `
-                        <svg class="animate-spin-arc w-3.5 h-3.5 text-[#1967d2]" viewBox="0 0 24 24" fill="none">
+                        <svg class="animate-spin-arc w-3.5 h-3.5 text-[#8ab4f8] md:text-[#1967d2]" viewBox="0 0 24 24" fill="none">
                           <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-opacity="0.18" stroke-width="2.2"/>
                           <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
                         </svg>
-                      ` : `<span class="text-[#188038] text-xs font-bold">✓</span>`}
-                      <span class="text-[#787878] text-xs">${isToolOpen ? '▴' : '▾'}</span>
+                      ` : `<span class="text-[#81c995] md:text-[#188038] text-xs font-bold">✓</span>`}
+                      <span class="text-[#9aa0a6] md:text-[#787878] text-xs">${isToolOpen ? '▴' : '▾'}</span>
                     </div>
                   </button>
                   ${isToolOpen && (tc.command || tc.path || tc.output) ? `
-                    <div class="px-3 py-2 bg-[#1e1e1e] text-[12px] font-mono text-[#d4d4d4] space-y-1.5 overflow-x-auto thin-scroll">
+                    <div class="px-3 py-2 bg-[#161715] md:bg-[#1e1e1e] text-[12px] font-mono text-[#d4d4d4] space-y-1.5 overflow-x-auto thin-scroll">
                       ${tc.command ? `<div class="text-[#8ab4f8]">$ ${escapeHtml(tc.command)}</div>` : ''}
                       ${tc.path ? `<div class="text-[#81c995]">File: ${escapeHtml(tc.path)}</div>` : ''}
                       ${tc.output ? `<pre class="text-[#c4c4c4] whitespace-pre-wrap max-h-52 overflow-y-auto">${escapeHtml(tc.output)}</pre>` : ''}
@@ -1512,7 +1956,7 @@
         ` : '';
 
         return `
-          <div class="space-y-2.5 text-[14.5px] leading-[1.65] text-[#1f1f1f] break-words">
+          <div class="space-y-2.5 text-[15px] md:text-[14.5px] leading-[1.65] text-[#e3e3e3] md:text-[#1f1f1f] break-words">
             ${thinkHtml}
             ${toolsHtml}
             ${renderMessageMediaHtml(msg)}
@@ -1526,7 +1970,7 @@
       if (newSig !== prevMsgSig) {
         prevMsgSig = newSig;
         const sc = document.getElementById('messagesScrollArea');
-        setTimeout(() => { sc.scrollTop = sc.scrollHeight; }, 50);
+        setTimeout(() => { sc.scrollTop = sc.scrollHeight; handleMessagesScroll(sc); }, 50);
       }
     }
 
@@ -1592,14 +2036,16 @@
       if (isRun) {
         arrow.classList.add('hidden');
         stop.classList.remove('hidden');
-        btn.className = 'w-7 h-7 rounded-full bg-[#fce8e6] hover:bg-[#f8d7da] text-[#d93025] flex items-center justify-center transition-all cursor-pointer';
+        btn.className = 'w-9 h-9 md:w-7 md:h-7 rounded-full bg-[#382624] md:bg-[#fce8e6] hover:bg-[#482c29] md:hover:bg-[#f8d7da] text-[#ea4335] md:text-[#d93025] flex items-center justify-center transition-all cursor-pointer';
         btn.title = 'Stop running task';
       } else {
         arrow.classList.remove('hidden');
         stop.classList.add('hidden');
         const hasInput = ta.value.trim().length > 0 || attachedMedia.length > 0;
-        btn.className = `w-7 h-7 rounded-full flex items-center justify-center transition-all cursor-pointer ${
-          hasInput ? 'bg-[#1f1f1f] text-white shadow-xs' : 'bg-[#e4e4e2] text-[#6e6e6e]'
+        btn.className = `w-9 h-9 md:w-7 md:h-7 rounded-full flex items-center justify-center transition-all cursor-pointer ${
+          hasInput
+            ? 'bg-[#e3e3e3] text-[#1e1f1c] md:bg-[#1f1f1f] md:text-white shadow-xs'
+            : 'bg-[#333531] text-[#8e918f] md:bg-[#e4e4e2] md:text-[#6e6e6e]'
         }`;
         btn.title = 'Submit';
       }
@@ -1703,6 +2149,8 @@
       document.getElementById('emptyStateView').classList.add('hidden');
       document.getElementById('activeConvView').classList.remove('hidden');
       document.getElementById('activeConvHeaderBar').classList.remove('hidden');
+      document.getElementById('mobileHomeHeaderBar')?.classList.add('hidden');
+      document.getElementById('mobileConvHeaderBar')?.classList.remove('hidden');
       mountComposerTo('bottomComposerMount');
       renderActiveConversation();
 
@@ -1838,13 +2286,13 @@
       row.innerHTML = attachedMedia.map((att, i) => {
         const isImg = (att.mimeType || '').startsWith('image/');
         return `
-          <div class="relative group shrink-0 rounded-xl overflow-hidden border border-[#d8d8d4] bg-[#f7f7f5]">
+          <div class="relative group shrink-0 rounded-xl overflow-hidden border border-[#3a3b38] md:border-[#d8d8d4] bg-[#2b2c29] md:bg-[#f7f7f5]">
             ${isImg ? `
               <div class="w-14 h-14">
                 <img src="${att.dataUrl}" class="w-full h-full object-cover" alt="" />
               </div>
             ` : `
-              <div class="h-12 px-3 flex items-center gap-1.5 text-xs text-[#1f1f1f] max-w-[160px] truncate">
+              <div class="h-12 px-3 flex items-center gap-1.5 text-xs text-[#e3e3e3] md:text-[#1f1f1f] max-w-[160px] truncate">
                 <img src="/icons/cat_prompt_scroll.png" class="w-4 h-4 object-contain shrink-0" alt="" />
                 <span class="truncate">${escapeHtml(att.name)}</span>
               </div>
@@ -1896,7 +2344,7 @@
     // POPOVERS & DROPDOWNS (MODEL, TURBO, LOCAL, PROJECT, SLASH, MENTION)
     // =========================================================================
     function closeAllPopovers() {
-      ['modelMenuPopover', 'execModePopover', 'envModePopover', 'projectDropdownMenu', 'hostPopover', 'slashMenuPopover', 'mentionMenuPopover'].forEach(id => {
+      ['modelMenuPopover', 'execModePopover', 'envModePopover', 'projectDropdownMenu', 'hostPopover', 'mobileHostPopover', 'slashMenuPopover', 'mentionMenuPopover'].forEach(id => {
         document.getElementById(id)?.classList.add('hidden');
       });
     }
@@ -1908,8 +2356,20 @@
       document.getElementById('selectedModelTierLabel').textContent = selectedModel.tier || '';
     }
 
+    function getModelMobileBadge(m) {
+      const lbl = ((m.name || '') + ' ' + (m.label || '') + ' ' + (m.tag || '')).toLowerCase();
+      if (lbl.includes('argon') || lbl.includes('new')) {
+        return `<span class="px-2 py-0.5 rounded-md bg-[#333531] text-[#c4c7c5] text-[11.5px] font-medium">New</span>`;
+      }
+      if (lbl.includes('flash') || lbl.includes('fast')) {
+        return `<span class="px-2 py-0.5 rounded-md bg-[#333531] text-[#c4c7c5] text-[11.5px] font-medium flex items-center gap-1">Fast <span class="text-[10.5px] opacity-80">ⓘ</span></span>`;
+      }
+      return `<span class="px-2 py-0.5 rounded-md bg-[#333531] text-[#c4c7c5] text-[11.5px] font-medium flex items-center gap-1">Notice <span class="text-[10.5px] opacity-80">ⓘ</span></span>`;
+    }
+
     function renderModelMenuItems() {
       const container = document.getElementById('modelMenuItems');
+      const mobSheet = document.getElementById('mobileModelSheetItems');
       const models = overviewData.models || [];
       container.innerHTML = models.map(m => {
         const isSel = m.id === selectedModel.id;
@@ -1932,6 +2392,29 @@
           </button>
         `;
       }).join('');
+
+      if (mobSheet) {
+        mobSheet.innerHTML = models.map(m => {
+          const isSel = m.id === selectedModel.id;
+          return `
+            <button
+              type="button"
+              onclick="selectModelById('${escapeHtml(m.id)}'); closeMobileModelSheet();"
+              class="w-full px-5 py-3.5 flex items-center justify-between hover:bg-white/[0.04] text-left transition-colors cursor-pointer"
+            >
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="text-[15px] text-[#e3e3e3] truncate">${escapeHtml(m.name || m.label)}</span>
+                ${m.tier ? `<span class="text-[14.5px] text-[#8e918f]">${escapeHtml(m.tier)}</span>` : ''}
+                ${getModelMobileBadge(m)}
+              </div>
+              <div class="flex items-center gap-2.5 shrink-0">
+                ${isSel ? '<span class="text-[#e3e3e3] text-[15px]">✓</span>' : ''}
+                <svg class="w-4 h-4 text-[#8e918f]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+              </div>
+            </button>
+          `;
+        }).join('');
+      }
     }
 
     function selectModelById(mid) {
@@ -1942,6 +2425,21 @@
         renderModelMenuItems();
       }
       closeAllPopovers();
+    }
+
+    function toggleModelSelector(e) {
+      e.stopPropagation();
+      if (isMobileViewport()) {
+        closeAllPopovers();
+        renderModelMenuItems();
+        document.getElementById('mobileModelSheetModal')?.classList.remove('hidden');
+        return;
+      }
+      toggleModelPopover(e);
+    }
+
+    function closeMobileModelSheet() {
+      document.getElementById('mobileModelSheetModal')?.classList.add('hidden');
     }
 
     function toggleModelPopover(e) {
@@ -2015,6 +2513,15 @@
       if (wasHidden) el.classList.remove('hidden');
     }
 
+    function toggleMobileHostPopover(e) {
+      e.stopPropagation();
+      const el = document.getElementById('mobileHostPopover');
+      if (!el) return;
+      const wasHidden = el.classList.contains('hidden');
+      closeAllPopovers();
+      if (wasHidden) el.classList.remove('hidden');
+    }
+
     function renderHostInstancesPopover() {
       const list = (overviewData.host && overviewData.host.instances) || [];
       document.getElementById('hostInstancesList').innerHTML = list.map(inst => `
@@ -2029,6 +2536,21 @@
           <span class="text-[#1967d2] text-xs font-bold">✓</span>
         </div>
       `).join('');
+      const mobList = document.getElementById('mobileHostInstancesList');
+      if (mobList) {
+        mobList.innerHTML = list.map(inst => `
+          <div class="px-3.5 py-2 flex items-center justify-between hover:bg-white/[0.04]">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="w-2 h-2 rounded-full bg-[#34a853] shrink-0"></span>
+              <div class="truncate">
+                <div class="text-[13px] font-medium text-[#e3e3e3] truncate">${escapeHtml(inst.name)}</div>
+                <div class="text-xs text-[#9aa0a6] truncate">${escapeHtml(inst.label)}</div>
+              </div>
+            </div>
+            <span class="text-[#8ab4f8] text-xs font-bold">✓</span>
+          </div>
+        `).join('');
+      }
     }
 
     function renderSlashMenu(filterVal) {
@@ -2038,10 +2560,10 @@
         <button
           type="button"
           onclick="applySlashCmd('${it.cmd}')"
-          class="w-full px-3.5 py-2 flex items-center justify-between hover:bg-black/[0.04] text-left cursor-pointer"
+          class="w-full px-3.5 py-2 flex items-center justify-between hover:bg-white/[0.06] md:hover:bg-black/[0.04] text-left cursor-pointer"
         >
-          <span class="text-[13px] font-mono text-[#1967d2] font-medium">${it.cmd}</span>
-          <span class="text-[12.5px] text-[#6e6e6e] truncate ml-3">${escapeHtml(it.desc)}</span>
+          <span class="text-[13px] font-mono text-[#8ab4f8] md:text-[#1967d2] font-medium">${it.cmd}</span>
+          <span class="text-[12.5px] text-[#9aa0a6] md:text-[#6e6e6e] truncate ml-3">${escapeHtml(it.desc)}</span>
         </button>
       `).join('');
     }
@@ -2060,10 +2582,10 @@
         <button
           type="button"
           onclick="applyMentionProject('${escapeHtml(p.id)}', '${escapeHtml(p.name)}')"
-          class="w-full px-3.5 py-2 flex items-center gap-2.5 hover:bg-black/[0.04] text-left cursor-pointer"
+          class="w-full px-3.5 py-2 flex items-center gap-2.5 hover:bg-white/[0.06] md:hover:bg-black/[0.04] text-left cursor-pointer"
         >
-          <span class="text-[13px] text-[#1f1f1f]">📁 ${escapeHtml(p.name)}</span>
-          <span class="text-[12px] text-[#8e8e8e] ml-auto">${p.totalCount || 0} convs</span>
+          <span class="text-[13px] text-[#e3e3e3] md:text-[#1f1f1f]">📁 ${escapeHtml(p.name)}</span>
+          <span class="text-[12px] text-[#9aa0a6] md:text-[#8e8e8e] ml-auto">${p.totalCount || 0} convs</span>
         </button>
       `).join('');
     }
@@ -2091,10 +2613,12 @@
       const btns = document.getElementById('collapsedSidebarBtns');
       if (sidebarCollapsedDesktop) {
         sb.classList.add('md:hidden');
-        btns.classList.remove('md:hidden');
+        btns.classList.remove('hidden');
+        btns.classList.add('md:flex');
       } else {
         sb.classList.remove('md:hidden');
-        btns.classList.add('md:hidden');
+        btns.classList.add('hidden');
+        btns.classList.remove('md:flex');
       }
     }
 
@@ -2104,7 +2628,9 @@
       } else {
         sidebarCollapsedDesktop = false;
         document.getElementById('leftSidebar').classList.remove('md:hidden');
-        document.getElementById('collapsedSidebarBtns').classList.add('md:hidden');
+        const btns = document.getElementById('collapsedSidebarBtns');
+        btns.classList.add('hidden');
+        btns.classList.remove('md:flex');
       }
     }
 
@@ -2340,7 +2866,8 @@
     // KHỞI ĐỘNG ỨNG DỤNG
     // =========================================================================
     (async function bootApp() {
-      // Gắn Composer vào màn hình New Conversation ban đầu
+      // Khóa visualViewport trên Mobile & gắn Composer vào màn hình Home/New Conversation ban đầu
+      syncMobileVisualViewport();
       mountComposerTo('emptyComposerMount');
 
       // Nếu có mã PIN từ URL vừa lưu, luôn đổi sang Session Token 256-bit mới (tránh kẹt sessionToken cũ trong localStorage)
