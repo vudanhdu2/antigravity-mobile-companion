@@ -1,10 +1,15 @@
-# 🛡️ Antigravity Mobile Companion v2.3 — Giao Diện Chuẩn Google Antigravity (Desktop & Mobile Web) + Đồng Bộ WebSocket Realtime + Tự Host Bảo Mật 100%
+# 🛡️ Antigravity Mobile Companion v2.4 — Dual-Engine Antigravity IDE + ChatGPT PC (Codex Desktop) + Đồng Bộ WebSocket Realtime + Tự Host Bảo Mật 100%
 
-> **Điều khiển trực tiếp ứng dụng Antigravity Desktop đang mở trên máy PC của bạn từ Điện thoại / Máy tính bảng / Laptop qua Wi-Fi LAN, Tailscale VPN hoặc 4G/5G (Cloudflare Quick Tunnel miễn phí) — giao diện giống hệt Google Antigravity trên cả Desktop (`#f9f9f8`) lẫn Mobile Web (`#1e1f1c` chuẩn `antigravity.google.com`), khóa cứng `window.visualViewport` trên iOS/Android, đồng bộ WebSocket Realtime (`<0.5s`), chống trễ/lặp lệnh (TTL + Idempotency) và 100% dữ liệu nằm trọn trên máy tính của bạn (Zero-Data-Leak).**
+> **Điều khiển trực tiếp cả hai ứng dụng Antigravity Desktop VÀ ChatGPT PC (Codex Desktop) đang mở trên máy PC của bạn từ Điện thoại / Máy tính bảng / Laptop qua Wi-Fi LAN, Tailscale VPN hoặc 4G/5G (Cloudflare Quick Tunnel miễn phí) — giao diện chuẩn Google Antigravity + ChatGPT PC trên cả Desktop (`#f9f9f8`) lẫn Mobile Web (`#1e1f1c`), đồng bộ hạn mức gói 5 giờ / hằng tuần theo thời gian thực, hỗ trợ giao việc & stream phản hồi cho cả phiên Local Codex (`01a...`) lẫn phiên Dự án Cloud/TPP (`6af...`), khóa cứng `window.visualViewport` trên iOS/Android, chống trễ/lặp lệnh (TTL + Idempotency) và 100% dữ liệu nằm trọn trên máy tính của bạn (Zero-Data-Leak).**
 
 ---
 
-## 🌟 Điểm nổi bật trên phiên bản v2.3
+## 🌟 Điểm nổi bật trên phiên bản v2.4
+
+0. **🤖 Đồng Bộ Kép (Dual-Engine): Antigravity IDE + ChatGPT PC (Codex Desktop)**:
+   - **Chuyển Đổi Tức Thì `ANTIGRAVITY` ↔ `CHATGPT`**: Đồng bộ đầy đủ danh sách **Đã ghim**, **Dự án Công việc** (`Phiên AI`, `BUSINESS`, `CLAUDE CODE`, `LUYỆN CỜ CODEX`...) và **Trò chuyện ChatGPT** từ `~/.codex/` (`state_5.sqlite`, `codex.db`, `codex-dev.db`, `thread_history_1.sqlite` kèm theo dõi `-wal`/`-shm` và `thread-writer-locks` realtime).
+   - **Đồng Bộ Hạn Mức Gói 5 Giờ & Hằng Tuần Chuẩn 100%**: Truy vấn trực tiếp `backend-api/wham/usage` hiển thị chính xác phần trăm còn lại (`Giới hạn trong 5 giờ`, `Giới hạn hằng tuần`) và tự động xóa cảnh báo cũ khi hạn mức đã đặt lại.
+   - **Giao Việc Hai Chiều & Stream Realtime Cho Mọi Phiên ChatGPT PC**: Hỗ trợ gửi lệnh mới và nhắn tiếp vào cả phiên Local Codex (`01a...` qua `codex exec resume --json`) lẫn phiên Dự án Cloud/TPP (`6af...` tự động nạp ngữ cảnh + stream `reasoning` / `commandExecution` / `agentMessage` theo thời gian thực và lưu bền vững qua `chatgpt_tpp_continuations.json`).
 
 1. **📱 Tối Ưu Giao Diện Mobile Web Chuẩn `antigravity.google.com` (`< 768px`)**:
    - **Khóa Cứng `window.visualViewport` (iOS Safari / Chrome & Android)**: Tự động neo khung ứng dụng theo chiều cao thực tế `visualViewport.height` và `visualViewport.offsetTop`, đảm bảo khung nhập Prompt ở đáy luôn hiển thị 100% phía trên thanh địa chỉ dưới của Chrome iOS và tự động đẩy lên mượt mà ngay trên đỉnh bàn phím ảo.
@@ -67,15 +72,15 @@ python companion_server.py --tunnel --detach --localhost-only
 
 ---
 
-## 🧪 Tự Kiểm Thử Bảo Mật, TTL/Idempotency, WMI Detach & WebSocket Realtime (16/16 Tests)
+## 🧪 Tự Kiểm Thử Bảo Mật, Dual-Engine ChatGPT PC, TTL/Idempotency, WMI Detach & WebSocket Realtime (18/18 Tests)
 
-Repo đi kèm bộ kiểm thử tự động `test_companion_security.py` giúp bạn tự kiểm chứng 16 hạng mục bảo mật, chống trễ/lặp lệnh, tự tách WMI chống Error 1033, giao diện chuẩn Antigravity và đồng bộ WebSocket ngay trên máy tính:
+Repo đi kèm bộ kiểm thử tự động `test_companion_security.py` giúp bạn tự kiểm chứng 18 hạng mục bảo mật, đồng bộ kép Antigravity IDE + ChatGPT PC (Codex Desktop), chống trễ/lặp lệnh, tự tách WMI chống Error 1033, giao diện chuẩn Antigravity và đồng bộ WebSocket ngay trên máy tính:
 
 ```bash
 python test_companion_security.py
 ```
 
-Bộ kiểm thử xác minh tự động 14/14 tiêu chí:
+Bộ kiểm thử xác minh tự động 18/18 tiêu chí:
 1. Khởi chạy Companion Server & phục vụ giao diện Web tĩnh.
 2. Giao diện chuẩn Google Antigravity (`Sidebar #f3f3f2`, `Pinned Conversations`, `Conversation History`, `Customizations`, khung nhập 2 tầng `Ask anything, @ to mention, / for actions`, bộ font `Google Sans` offline, Zero external QR leak).
 3. Chặn truy cập trái phép khi không có mã PIN (`HTTP 401`).
@@ -89,4 +94,8 @@ Bộ kiểm thử xác minh tự động 14/14 tiêu chí:
 11. Chốt chặn TTL (`HTTP 408 Expired`): từ chối lệnh quá hạn do nghẽn kết nối trước đó, không tự chạy muộn trên PC.
 12. Hủy lệnh chủ động (`/api/ag-companion/cancel_cmd`): ghi tombstone khóa vĩnh viễn gói tin đến trễ (`HTTP 409 Cancelled`).
 13. Băm SHA-256 toàn phần (gồm `app` & `media` digest): chống va chạm và phát hiện giả mạo/lệch nội dung cho cùng `cmdId`.
-14. Chống Brute-Force: tự động khóa IP (`HTTP 429`) sau 5 lần nhập sai mã PIN liên tiếp.
+14. Multi-User PC Fix: tự động nhận diện `primary_pid` và tự nhả nút Stop khi AI hoàn tất phản hồi.
+15. Chống Brute-Force: tự động khóa IP (`HTTP 429`) sau 5 lần nhập sai mã PIN liên tiếp.
+16. WMI Detached Daemon (`--detach`): tiến trình sống độc lập 100% sau khi phiên lệnh cha kết thúc (chống Error 1033).
+17. Multi-Device Realtime Sync: tự xóa `sessionToken` cũ khi gặp `401/429` và đồng bộ WebSocket đa thiết bị không mất dấu vân tay.
+18. Dual-Engine Antigravity + ChatGPT PC (Codex Desktop v2.4): đồng bộ danh mục dự án, hạn mức 5 giờ/hằng tuần và đọc chi tiết/giao việc hai chiều cho cả phiên Local (`01a...`) lẫn Cloud/TPP (`6af...`).
