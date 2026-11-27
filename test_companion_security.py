@@ -443,12 +443,54 @@ def run_test_suite() -> int:
             cg_det = cs.read_local_conversation_detail(cg_sample_cid, {})
             assert isinstance(cg_det, dict) and cg_det.get("provider") == "chatgpt", f"Đọc chi tiết phiên ChatGPT PC thất bại: {cg_det}"
         print(
-            f"[PASS 18/18] Dual-Engine Antigravity + ChatGPT PC (Codex Desktop v2.4): "
+            f"[PASS 18/20] Dual-Engine Antigravity + ChatGPT PC (Codex Desktop v2.4): "
             f"{cg_ov.get('totalConversations', 0)} phiên, {len(cg_ov.get('projects') or [])} nhóm dự án, quota source={cg_quota.get('source')}."
         )
 
+        # 19. Kiểm thử WebSocket binary Ping/Close, khử trùng lặp edited step_index & bộ lọc AI subagent/run_workflow (v2.5)
+        fake_sock_chunks: list[bytes] = []
+        class _FakeSock:
+            def sendall(self, b: bytes) -> None:
+                fake_sock_chunks.append(b)
+        fake_client = {"sock": _FakeSock(), "lock": __import__("threading").Lock()}
+        bin_ping = b"\x00\xff\xfe\x80ping"
+        assert cs.ws_send_frame(fake_client, bin_ping, opcode=0xA) is True
+        assert fake_sock_chunks and fake_sock_chunks[0][0] == 0x8A and fake_sock_chunks[0][2:] == bin_ping, (
+            "ws_send_frame phải bảo toàn nguyên vẹn payload nhị phân cho Ping/Pong/Close!"
+        )
+        assert cs._is_hidden_ai_spawned_trajectory("w1", {"nestingDepth": 1}) is True
+        assert cs._is_hidden_ai_spawned_trajectory("w2", {"agentName": "worker-1"}) is True
+        assert cs._is_hidden_ai_spawned_trajectory("w3", {"parentConversationId": "p0"}) is True
+        assert cs._is_hidden_ai_spawned_trajectory("main", {"nestingDepth": 0, "killed": False}) is False
+        # Test transcript edited step_index dedup
+        tmp_cid = f"test_v25_dedup_{int(time.time())}"
+        tmp_log_dir = cs.BRAIN_DIR / tmp_cid / ".system_generated" / "logs"
+        tmp_log_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            (tmp_log_dir / "transcript.jsonl").write_text(
+                "\n".join([
+                    json.dumps({"step_index": 1, "type": "USER_INPUT", "content": "ban nhap cu", "created_at": "2026-11-27T01:00:00Z"}),
+                    json.dumps({"step_index": 2, "type": "PLANNER_RESPONSE", "content": "tra loi cu", "status": "DONE", "created_at": "2026-11-27T01:00:01Z"}),
+                    json.dumps({"step_index": 1, "type": "USER_INPUT", "content": "ban sua moi", "created_at": "2026-11-27T01:00:05Z"}),
+                    json.dumps({"step_index": 2, "type": "PLANNER_RESPONSE", "content": "tra loi moi", "status": "DONE", "created_at": "2026-11-27T01:00:06Z"}),
+                ]) + "\n",
+                encoding="utf-8",
+            )
+            det_v25 = cs.read_local_conversation_detail(tmp_cid, {})
+            u_msgs = [m for m in det_v25.get("messages") or [] if m.get("role") == "user"]
+            assert len(u_msgs) == 1 and u_msgs[0]["content"] == "ban sua moi", f"Edited step_index không khử trùng lặp đúng: {u_msgs}"
+        finally:
+            import shutil as _shutil
+            _shutil.rmtree(cs.BRAIN_DIR / tmp_cid, ignore_errors=True)
+        print("[PASS 19/20] v2.5 Core Parity: Bảo toàn binary WebSocket Ping/Close, lọc AI subagent/run_workflow & khử trùng lặp edited step_index.")
+
+        # 20. Kiểm thử chống gửi nhầm IME tiếng Việt (isComposing / keyCode 229) & bôi đen sao chép tự do trong web/index.html (v2.5)
+        assert "!event.isComposing && event.keyCode!==229" in html_raw, "web/index.html thiếu chốt chặn IME tiếng Việt khi nhấn Enter!"
+        assert '<body class="h-dvh w-screen flex flex-col select-none' not in html_raw, "web/index.html không được gắn select-none lên toàn bộ <body>!"
+        print("[PASS 20/20] v2.5 UX Parity: Chống gửi nhầm IME tiếng Việt (isComposing/229) & cho phép bôi đen sao chép văn bản tự do.")
+
         print("=" * 78)
-        print("  KẾT QUẢ: 18/18 BÀI KIỂM THỬ BẢO MẬT, DUAL-ENGINE CHATGPT PC, MULTI-DEVICE & WEBSOCKET ĐẠT 100% (PASS)")
+        print("  KẾT QUẢ: 20/20 BÀI KIỂM THỬ BẢO MẬT, DUAL-ENGINE CHATGPT PC, MULTI-DEVICE & WEBSOCKET ĐẠT 100% (PASS)")
         print("=" * 78)
         return 0
     finally:

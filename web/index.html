@@ -51,7 +51,7 @@
     }
   </style>
 </head>
-<body class="h-dvh w-screen flex flex-col select-none overflow-hidden bg-[#1e1f1c] md:bg-[#f9f9f8] text-[#e3e3e3] md:text-[#1f1f1f]">
+<body class="h-dvh w-screen flex flex-col overflow-hidden bg-[#1e1f1c] md:bg-[#f9f9f8] text-[#e3e3e3] md:text-[#1f1f1f]">
 
   <!-- ===================================================================== -->
   <!-- MÀN HÌNH NHẬP MÃ PIN BẢO MẬT (KHI CHƯA CÓ SESSION TOKEN HỢP LỆ)        -->
@@ -670,7 +670,7 @@
             rows="1"
             oninput="handlePromptInput(this)"
             onpaste="handlePasteMedia(event)"
-            onkeydown="if(event.key==='Enter' && !event.shiftKey){ event.preventDefault(); submitPrompt(); }"
+            onkeydown="if(event.key==='Enter' && !event.shiftKey && !event.isComposing && event.keyCode!==229){ event.preventDefault(); submitPrompt(); }"
             placeholder="Ask anything, @ to mention, / for actions"
             class="w-full bg-transparent text-[#e3e3e3] md:text-[#1f1f1f] placeholder-[#8e918f] md:placeholder-[#8e8e8e] text-[16px] md:text-[14px] leading-relaxed outline-none resize-none max-h-32 md:max-h-36 min-h-[26px] md:min-h-[28px]"
           ></textarea>

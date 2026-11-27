@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { calibrateSrgbLutStage } from "../../utils/srgbLutProfile";
-import { maskEmailsInText } from '../../utils/quotaDisplay';
+import { isEmailMaskEnabled, maskEmailAddress, maskEmailsInText, setEmailMaskEnabled } from '../../utils/quotaDisplay';
+import HighlightText from '../../utils/HighlightText';
+import { matchesAllVnTokens, scoreVnSearchFields, tokenizeVnSearch } from '../../utils/vnSearch';
+import {
+    capturePreSendBaseline,
+    mergePendingUserMessage,
+    type PendingUserMsgEntry
+} from '../../utils/pendingPromptMerge';
 import {
     Settings,
     RefreshCw,
@@ -39,7 +46,12 @@ import {
     ArrowDown,
     MoreVertical,
     Gauge,
-    Info
+    Info,
+    Eye,
+    EyeOff,
+    LogOut,
+    User,
+    ExternalLink
 } from 'lucide-react';
 
 export interface RemoteAntigravityAgentProps {
@@ -57,7 +69,10 @@ export interface RemoteAntigravityAgentProps {
     onToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
     onBackToPortal?: () => void;
     onOpenMobileMenu?: () => void;
-    initialProvider?: 'antigravity' | 'chatgpt';
+    onOpenVirtualOffice?: () => void;
+    onOpenProfile?: () => void;
+    onLogout?: () => void;
+    initialProvider?: 'antigravity' | 'antigravity2' | 'win1' | 'chatgpt';
 }
 
 export interface CompanionModel {
@@ -69,6 +84,25 @@ export interface CompanionModel {
     cliModel: string;
     proxyModel: string;
     remainingFraction?: number;
+}
+
+export interface TurnStateInfo {
+    phase: 'idle' | 'running' | 'retrying' | 'cancelling';
+    retryAttempt?: number;
+    maxRetries?: number;
+    lastError?: string;
+    stalledSeconds?: number;
+    queuedCount?: number;
+}
+
+export interface QueuedPromptItem {
+    id: string;
+    cmdId?: string;
+    content: string;
+    media?: MediaAttachment[];
+    model?: string;
+    status: string;
+    createdAt: number;
 }
 
 export interface CompanionConversationItem {
@@ -84,12 +118,19 @@ export interface CompanionConversationItem {
     isRunning: boolean;
     unread: boolean;
     pinned: boolean;
-    provider?: 'antigravity' | 'chatgpt';
+    provider?: 'antigravity' | 'antigravity2' | 'win1' | 'chatgpt';
     sourceKind?: string;
     model?: string;
     reasoningEffort?: string;
     hasError?: boolean;
     errorMessage?: string;
+    turnState?: TurnStateInfo;
+    queuedCount?: number;
+    matchedIn?: string;
+    matchedMsgId?: string;
+    matchCount?: number;
+    snippet?: string;
+    matchScore?: number;
 }
 
 export interface CompanionProjectGroup {
@@ -176,6 +217,10 @@ export interface TrajectoryMessage {
     idx?: number;
     role: 'user' | 'assistant' | 'system';
     content: string;
+    isError?: boolean;
+    errorCode?: string;
+    errorDetail?: string;
+    httpStatus?: number;
     thinking?: string;
     thinkingSeconds?: number;
     toolCalls?: ToolCallItem[];
@@ -197,8 +242,13 @@ export interface ConversationDetail {
     title: string;
     projectId: string;
     projectName: string;
+    modelId?: string;
     status: string;
     isRunning: boolean;
+    hasError?: boolean;
+    errorMessage?: string;
+    turnState?: TurnStateInfo;
+    queuedPrompts?: QueuedPromptItem[];
     pinned: boolean;
     stepCount: number;
     lastModifiedTime?: string;
@@ -206,6 +256,26 @@ export interface ConversationDetail {
 }
 
 const DEFAULT_MODELS: CompanionModel[] = [
+    {
+        id: 'MODEL_PLACEHOLDER_M532',
+        label: 'Gemini 4 Neon (High)',
+        name: 'Gemini 4 Neon',
+        tier: 'High',
+        tag: 'New',
+        cliModel: 'pro',
+        proxyModel: 'gemini-2.5-flash',
+        remainingFraction: 0.99
+    },
+    {
+        id: 'MODEL_PLACEHOLDER_M535',
+        label: 'Gemini 4 Neon (Extra)',
+        name: 'Gemini 4 Neon',
+        tier: 'Extra',
+        tag: 'New',
+        cliModel: 'pro',
+        proxyModel: 'gemini-2.5-flash',
+        remainingFraction: 0.99
+    },
     {
         id: 'MODEL_PLACEHOLDER_M417',
         label: 'Gemini 4 Argon (High)',
@@ -463,10 +533,14 @@ const PcRunningArcSpinner: React.FC<{ className?: string }> = ({ className = 'w-
 
 export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
     member,
+    permittedAccounts,
     originUrl,
     onToast,
     onBackToPortal,
     onOpenMobileMenu,
+    onOpenVirtualOffice,
+    onOpenProfile,
+    onLogout,
     initialProvider
 }) => {
     // Strictly distinguish Host System Owner (Admin) vs regular Member accounts
@@ -539,21 +613,56 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
         return urls;
     }, [effectiveMemberId, safeAuthToken]);
 
-    // Provider State: 'antigravity' vs 'chatgpt' (synced from ChatGPT PC .codex)
+    // Provider State: 'antigravity' | 'antigravity2' | 'win1' | 'chatgpt'
     calibrateSrgbLutStage("hub:remote_agent");
-    const [activeProvider, setActiveProvider] = useState<'antigravity' | 'chatgpt'>(() => {
+    const [activeProvider, setActiveProvider] = useState<'antigravity' | 'antigravity2' | 'win1' | 'chatgpt'>(() => {
         if (initialProvider) return initialProvider;
         if (typeof window !== 'undefined') {
-            if ((window as any).__agRemoteActiveProvider === 'chatgpt') return 'chatgpt';
-            if ((window as any).__agRemoteActiveProvider === 'antigravity') return 'antigravity';
+            const pWin = (window as any).__agRemoteActiveProvider;
+            if (pWin === 'chatgpt' || pWin === 'antigravity2' || pWin === 'win1' || pWin === 'antigravity') return pWin;
             try {
                 const sp = new URLSearchParams(window.location.search);
-                if (sp.get('provider') === 'chatgpt') return 'chatgpt';
+                const qp = sp.get('provider');
+                if (qp === 'chatgpt' || qp === 'antigravity2' || qp === 'win1') return qp;
             } catch {}
         }
         return 'antigravity';
     });
     const isChatGPT = activeProvider === 'chatgpt';
+    const isAg2 = activeProvider === 'antigravity2';
+    const isWin1 = activeProvider === 'win1';
+    const [ag2HostName, setAg2HostName] = useState<string>(`${defaultHostName} (AG 2)`);
+    const [ag2Online, setAg2Online] = useState<boolean>(true);
+    const [ag2Models, setAg2Models] = useState<CompanionModel[]>(DEFAULT_MODELS);
+    const [ag2SelectedModel, setAg2SelectedModel] = useState<CompanionModel>(DEFAULT_MODELS[0]);
+    const [ag2PinnedConversations, setAg2PinnedConversations] = useState<CompanionConversationItem[]>([]);
+    const [ag2Projects, setAg2Projects] = useState<CompanionProjectGroup[]>([]);
+    const [ag2TargetProjectId, setAg2TargetProjectId] = useState<string>(defaultProjectId);
+    const [ag2TargetProjectName, setAg2TargetProjectName] = useState<string>(defaultProjectName);
+    const [pcActiveAg2Account, setPcActiveAg2Account] = useState<{
+        id?: string;
+        email?: string;
+        name?: string;
+        tier?: string;
+        source?: string;
+        online?: boolean;
+    } | null>(null);
+    const [win1HostName, setWin1HostName] = useState<string>('WIN1-17TRIEU');
+    const [win1Online, setWin1Online] = useState<boolean>(false);
+    const [win1Models, setWin1Models] = useState<CompanionModel[]>(DEFAULT_MODELS);
+    const [win1SelectedModel, setWin1SelectedModel] = useState<CompanionModel>(DEFAULT_MODELS[0]);
+    const [win1PinnedConversations, setWin1PinnedConversations] = useState<CompanionConversationItem[]>([]);
+    const [win1Projects, setWin1Projects] = useState<CompanionProjectGroup[]>([]);
+    const [win1TargetProjectId, setWin1TargetProjectId] = useState<string>('default-cli-project');
+    const [win1TargetProjectName, setWin1TargetProjectName] = useState<string>('CLI Project');
+    const [pcActiveWin1Account, setPcActiveWin1Account] = useState<{
+        id?: string;
+        email?: string;
+        name?: string;
+        tier?: string;
+        source?: string;
+        online?: boolean;
+    } | null>(null);
     const [chatgptSubTab, setChatgptSubTab] = useState<'work' | 'chat'>('work');
     const [chatgptPermMode, setChatgptPermMode] = useState<string>('Toàn quyền tiếp cận');
     const [chatgptModels, setChatgptModels] = useState<CompanionModel[]>(DEFAULT_CHATGPT_MODELS);
@@ -578,6 +687,31 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
     const [isLoadingOverview, setIsLoadingOverview] = useState<boolean>(true);
     const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
     const [wsLiveConnected, setWsLiveConnected] = useState<boolean>(false);
+    const [pcActiveAgAccount, setPcActiveAgAccount] = useState<{
+        id?: string;
+        email?: string;
+        name?: string;
+        tier?: string;
+        source?: string;
+    } | null>(null);
+    const [pcActiveChatgptAccount, setPcActiveChatgptAccount] = useState<{
+        accountId?: string;
+        email?: string;
+        name?: string;
+        planType?: string;
+        source?: string;
+    } | null>(null);
+    const [showAccountEmails, setShowAccountEmails] = useState<boolean>(() => !isEmailMaskEnabled());
+
+    useEffect(() => {
+        const syncMaskPref = () => setShowAccountEmails(!isEmailMaskEnabled());
+        window.addEventListener('storage', syncMaskPref);
+        window.addEventListener('focus', syncMaskPref);
+        return () => {
+            window.removeEventListener('storage', syncMaskPref);
+            window.removeEventListener('focus', syncMaskPref);
+        };
+    }, []);
 
     // Desktop Sidebar & Composer Controls
     const [desktopSidebarOpen, setDesktopSidebarOpen] = useState<boolean>(true);
@@ -600,6 +734,19 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
     const [filterUnreadOnly, setFilterUnreadOnly] = useState<boolean>(false);
     const [searchQuery, setSearchQuery] = useState<string>('');
     const [searchBarOpen, setSearchBarOpen] = useState<boolean>(false);
+    const [deepSearchResults, setDeepSearchResults] = useState<CompanionConversationItem[]>([]);
+    const [deepSearchTotal, setDeepSearchTotal] = useState<number>(0);
+    const [deepSearchLoading, setDeepSearchLoading] = useState<boolean>(false);
+    const [deepSearchWarming, setDeepSearchWarming] = useState<boolean>(false);
+    const [historySearchQuery, setHistorySearchQuery] = useState<string>('');
+    const [inConvSearchOpen, setInConvSearchOpen] = useState<boolean>(false);
+    const [inConvSearchQuery, setInConvSearchQuery] = useState<string>('');
+    const [inConvMatchCursor, setInConvMatchCursor] = useState<number>(0);
+    const [pendingJumpMsgId, setPendingJumpMsgId] = useState<string | null>(null);
+    const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
+    const sidebarSearchInputRef = useRef<HTMLInputElement | null>(null);
+    const inConvSearchInputRef = useRef<HTMLInputElement | null>(null);
+    const suppressAutoScrollUntilRef = useRef<number>(0);
 
     // Active Conversation View State & Back/Forward History Stack
     const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
@@ -610,12 +757,12 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
     const [navHistory, setNavHistory] = useState<Array<string | null>>([null]);
     const [navIndex, setNavIndex] = useState<number>(0);
 
-    // Effective active lists & selections depending on activeProvider ('antigravity' vs 'chatgpt')
+    // Effective active lists & selections depending on activeProvider ('antigravity' | 'antigravity2' | 'win1' | 'chatgpt')
     const CHATGPT_CLOUD_IDS = useMemo(() => new Set(['chatgpt-cloud-chat', 'chatgpt-cloud-sessions']), []);
-    const effectiveModels = isChatGPT ? chatgptModels : models;
-    const effectiveSelectedModel = isChatGPT ? chatgptSelectedModel : selectedModel;
+    const effectiveModels = isChatGPT ? chatgptModels : isAg2 ? ag2Models : isWin1 ? win1Models : models;
+    const effectiveSelectedModel = isChatGPT ? chatgptSelectedModel : isAg2 ? ag2SelectedModel : isWin1 ? win1SelectedModel : selectedModel;
     const effectivePinnedConversations = useMemo(() => {
-        if (!isChatGPT) return pinnedConversations;
+        if (!isChatGPT) return isAg2 ? ag2PinnedConversations : isWin1 ? win1PinnedConversations : pinnedConversations;
         if (chatgptSubTab === 'chat') {
             return chatgptPinnedConversations.filter(
                 c => c.sourceKind === 'chat' || CHATGPT_CLOUD_IDS.has(c.projectId)
@@ -624,9 +771,9 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
         return chatgptPinnedConversations.filter(
             c => c.sourceKind !== 'chat' && !CHATGPT_CLOUD_IDS.has(c.projectId)
         );
-    }, [isChatGPT, pinnedConversations, chatgptPinnedConversations, chatgptSubTab, CHATGPT_CLOUD_IDS]);
+    }, [isChatGPT, isAg2, isWin1, pinnedConversations, ag2PinnedConversations, win1PinnedConversations, chatgptPinnedConversations, chatgptSubTab, CHATGPT_CLOUD_IDS]);
     const effectiveProjects = useMemo(() => {
-        if (!isChatGPT) return projects;
+        if (!isChatGPT) return isAg2 ? ag2Projects : isWin1 ? win1Projects : projects;
         if (chatgptSubTab === 'chat') {
             return chatgptProjects.filter(
                 p =>
@@ -638,15 +785,122 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
         return chatgptProjects.filter(
             p => !CHATGPT_CLOUD_IDS.has(p.id) && p.sourceKind !== 'chat'
         );
-    }, [isChatGPT, projects, chatgptProjects, chatgptSubTab, CHATGPT_CLOUD_IDS]);
-    const effectiveTargetProjectId = isChatGPT ? chatgptTargetProjectId : targetNewProjectId;
-    const effectiveTargetProjectName = isChatGPT ? chatgptTargetProjectName : targetNewProjectName;
+    }, [isChatGPT, isAg2, isWin1, projects, ag2Projects, win1Projects, chatgptProjects, chatgptSubTab, CHATGPT_CLOUD_IDS]);
+    const effectiveTargetProjectId = isChatGPT ? chatgptTargetProjectId : isAg2 ? ag2TargetProjectId : isWin1 ? win1TargetProjectId : targetNewProjectId;
+    const effectiveTargetProjectName = isChatGPT ? chatgptTargetProjectName : isAg2 ? ag2TargetProjectName : isWin1 ? win1TargetProjectName : targetNewProjectName;
+
+    const setEffectiveTargetProject = (pid: string, pname: string) => {
+        if (isChatGPT) {
+            setChatgptTargetProjectId(pid);
+            setChatgptTargetProjectName(pname);
+        } else if (isAg2) {
+            setAg2TargetProjectId(pid);
+            setAg2TargetProjectName(pname);
+        } else if (isWin1) {
+            setWin1TargetProjectId(pid);
+            setWin1TargetProjectName(pname);
+        } else {
+            setTargetNewProjectId(pid);
+            setTargetNewProjectName(pname);
+        }
+    };
+
+    const pcDefaultModelIdRef = useRef<{ antigravity: string; antigravity2: string; win1: string }>({
+        antigravity: '',
+        antigravity2: '',
+        win1: ''
+    });
+    const manualModelOverrideRef = useRef<
+        Record<string, { cid: string | null; modelId: string; serverModelIdAtPick: string }>
+    >({});
+    const activeProviderRef = useRef<string>(activeProvider);
+    activeProviderRef.current = activeProvider;
+    const activeConvModelIdRef = useRef<string>('');
+    activeConvModelIdRef.current =
+        activeConversation && activeConversation.id === activeConversationId
+            ? String(activeConversation.modelId || '').trim()
+            : '';
+
+    const normalizeModelList = useCallback((list: CompanionModel[]): CompanionModel[] => {
+        return list.map(m => {
+            const rawTier = String(m.tier || '').trim();
+            if (rawTier.toLowerCase() === 'xhigh') {
+                return {
+                    ...m,
+                    tier: 'Extra',
+                    label: m.label ? m.label.replace(/\(XHigh\)/i, '(Extra)') : `${m.name} (Extra)`
+                };
+            }
+            return m;
+        });
+    }, []);
+
+    const setEffectiveSelectedModel = (m: CompanionModel) => {
+        if (isChatGPT) {
+            setChatgptSelectedModel(m);
+            return;
+        }
+        const provKey = activeProvider as 'antigravity' | 'antigravity2' | 'win1';
+        const serverMid =
+            (activeConversation?.id === activeConversationId ? activeConversation?.modelId : '') ||
+            pcDefaultModelIdRef.current[provKey] ||
+            '';
+        manualModelOverrideRef.current[provKey] = {
+            cid: activeConversationId,
+            modelId: m.id,
+            serverModelIdAtPick: serverMid
+        };
+        if (isAg2) setAg2SelectedModel(m);
+        else if (isWin1) setWin1SelectedModel(m);
+        else setSelectedModel(m);
+    };
+
+    // Sync selected model dropdown seamlessly with Antigravity PC (active conversation's modelId > PC defaultModelId)
+    useEffect(() => {
+        if (isChatGPT) return;
+        if (!Array.isArray(effectiveModels) || effectiveModels.length === 0) return;
+        const provKey = activeProvider as 'antigravity' | 'antigravity2' | 'win1';
+        const convMid =
+            activeConversation && activeConversation.id === activeConversationId
+                ? String(activeConversation.modelId || '').trim()
+                : '';
+        const targetMid = convMid || pcDefaultModelIdRef.current[provKey] || effectiveModels[0]?.id || '';
+        if (!targetMid) return;
+
+        const override = manualModelOverrideRef.current[provKey];
+        if (
+            override &&
+            override.cid === activeConversationId &&
+            override.serverModelIdAtPick === targetMid
+        ) {
+            // Respect the user's explicit manual dropdown selection for this conversation until sent or changed on PC
+            return;
+        }
+        if (override && (override.cid !== activeConversationId || override.serverModelIdAtPick !== targetMid)) {
+            delete manualModelOverrideRef.current[provKey];
+        }
+
+        const matched = effectiveModels.find(m => m.id === targetMid);
+        if (!matched) return;
+
+        if (isAg2) {
+            setAg2SelectedModel(prev => (prev.id === matched.id ? prev : matched));
+        } else if (isWin1) {
+            setWin1SelectedModel(prev => (prev.id === matched.id ? prev : matched));
+        } else {
+            setSelectedModel(prev => (prev.id === matched.id ? prev : matched));
+        }
+    }, [activeProvider, activeConversationId, activeConversation?.id, activeConversation?.modelId, effectiveModels, isAg2, isWin1, isChatGPT]);
 
     const providerConvMemoryRef = useRef<{
         antigravity: { id: string | null; conv: ConversationDetail | null; nav: Array<string | null>; navIdx: number };
+        antigravity2: { id: string | null; conv: ConversationDetail | null; nav: Array<string | null>; navIdx: number };
+        win1: { id: string | null; conv: ConversationDetail | null; nav: Array<string | null>; navIdx: number };
         chatgpt: { id: string | null; conv: ConversationDetail | null; nav: Array<string | null>; navIdx: number };
     }>({
         antigravity: { id: null, conv: null, nav: [null], navIdx: 0 },
+        antigravity2: { id: null, conv: null, nav: [null], navIdx: 0 },
+        win1: { id: null, conv: null, nav: [null], navIdx: 0 },
         chatgpt: { id: null, conv: null, nav: [null], navIdx: 0 }
     });
 
@@ -727,6 +981,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
     // Composer State
     const [promptText, setPromptText] = useState<string>('');
     const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+    const [isCancelling, setIsCancelling] = useState<boolean>(false);
     const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
     const [expandedTools, setExpandedTools] = useState<Record<string, boolean>>({});
     const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
@@ -743,6 +998,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
     const [mentionMenuOpen, setMentionMenuOpen] = useState<boolean>(false);
     const [newProjectModalOpen, setNewProjectModalOpen] = useState<boolean>(false);
     const [customData, setCustomData] = useState<{
+        provider?: string;
         rules?: Array<{ name: string; path: string; sizeBytes?: number }>;
         skills?: Array<{ name: string; path: string }>;
         mcpServers?: Array<{ name: string; toolsCount?: number }>;
@@ -762,13 +1018,16 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
     activeCidRef.current = activeConversationId;
 
     const handleSwitchProvider = useCallback(
-        (nextProvider: 'antigravity' | 'chatgpt') => {
+        (nextProvider: 'antigravity' | 'antigravity2' | 'win1' | 'chatgpt') => {
             if (typeof window !== 'undefined') {
                 (window as any).__agRemoteActiveProvider = nextProvider;
                 try {
                     const url = new URL(window.location.href);
-                    if (nextProvider === 'chatgpt') url.searchParams.set('provider', 'chatgpt');
-                    else url.searchParams.delete('provider');
+                    if (nextProvider === 'chatgpt' || nextProvider === 'antigravity2' || nextProvider === 'win1') {
+                        url.searchParams.set('provider', nextProvider);
+                    } else {
+                        url.searchParams.delete('provider');
+                    }
                     window.history.replaceState({}, '', url.toString());
                 } catch {}
                 window.dispatchEvent(new CustomEvent('ag-remote-provider-changed', { detail: nextProvider }));
@@ -801,63 +1060,62 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
         if (typeof window === 'undefined') return;
         const onExtSwitch = (e: Event) => {
             const detail = (e as CustomEvent).detail;
-            if (detail === 'chatgpt' || detail === 'antigravity') {
+            if (detail === 'chatgpt' || detail === 'antigravity' || detail === 'antigravity2' || detail === 'win1') {
                 handleSwitchProvider(detail);
             }
         };
         window.addEventListener('ag-remote-switch-provider', onExtSwitch);
         return () => window.removeEventListener('ag-remote-switch-provider', onExtSwitch);
     }, [handleSwitchProvider]);
-    const pendingUserMsgsRef = useRef<Record<string, { text: string; media?: MediaAttachment[]; sentAt: number; title?: string; projectId?: string; projectName?: string }>>({});
 
-    // Merge optimistic sent user message into conversation detail so background polls never wipe out just-sent prompts
-    const mergePendingUserMsg = useCallback((detail: ConversationDetail): ConversationDetail => {
-        if (!detail || !detail.id) return detail;
-        const pending = pendingUserMsgsRef.current[detail.id];
-        if (!pending) return detail;
-        if (Date.now() - pending.sentAt > 50000) {
-            delete pendingUserMsgsRef.current[detail.id];
-            return detail;
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const applyPendingPrompt = (rawPrompt?: unknown) => {
+            const txt = typeof rawPrompt === 'string' ? rawPrompt.trim() : '';
+            if (!txt) return;
+            (window as any).__agPendingRemotePrompt = '';
+            handleSwitchProvider('antigravity');
+            setPromptText(txt);
+            window.setTimeout(() => {
+                const el = desktopTextareaRef.current || mobileTextareaRef.current;
+                if (el) {
+                    el.focus();
+                    try {
+                        el.setSelectionRange(txt.length, txt.length);
+                    } catch {}
+                }
+            }, 90);
+        };
+
+        const queued = (window as any).__agPendingRemotePrompt;
+        if (typeof queued === 'string' && queued.trim()) {
+            applyPendingPrompt(queued);
         }
-        const msgs = Array.isArray(detail.messages) ? [...detail.messages] : [];
-        const hasMsg = msgs.slice(-6).some(
-            m =>
-                m.role === 'user' &&
-                ((pending.text.trim() && (m.content || '').trim() === pending.text.trim()) ||
-                    (!pending.text.trim() && pending.media?.length && m.media?.length))
-        );
-        if (!hasMsg) {
-            msgs.push({
-                id: `opt_u_${pending.sentAt}`,
-                role: 'user',
-                content: pending.text,
-                media: pending.media,
-                timestamp: pending.sentAt
-            });
-            return {
-                ...detail,
-                title: detail.title && detail.title !== 'Conversation' ? detail.title : (pending.title || detail.title),
-                projectId: detail.projectId || pending.projectId || defaultProjectId,
-                projectName: detail.projectName || pending.projectName || defaultProjectName,
-                isRunning: true,
-                status: 'CASCADE_RUN_STATUS_RUNNING',
-                stepCount: Math.max(detail.stepCount || 0, msgs.length),
-                messages: msgs
-            };
-        }
-        if (Date.now() - pending.sentAt < 8000 && msgs[msgs.length - 1]?.role === 'user') {
-            return {
-                ...detail,
-                isRunning: true,
-                status: 'CASCADE_RUN_STATUS_RUNNING'
-            };
-        }
-        return detail;
-    }, [defaultProjectId, defaultProjectName]);
+        const onPrefill = (e: Event) => {
+            applyPendingPrompt((e as CustomEvent).detail);
+        };
+        window.addEventListener('ag-prefill-remote-prompt', onPrefill);
+        return () => window.removeEventListener('ag-prefill-remote-prompt', onPrefill);
+    }, [handleSwitchProvider]);
+    const pendingUserMsgsRef = useRef<Record<string, PendingUserMsgEntry<MediaAttachment>>>({});
+    const isSubmittingRef = useRef(false);
+
+    // Merge optimistic sent user message into conversation detail without relying on client-vs-PC clock equality
+    const mergePendingUserMsg = useCallback(
+        (detail: ConversationDetail): ConversationDetail =>
+            mergePendingUserMessage(detail, pendingUserMsgsRef.current, {
+                defaultProjectId,
+                defaultProjectName
+            }),
+        [defaultProjectId, defaultProjectName]
+    );
 
     // Universal Companion Command Dispatcher (works on HTTP LAN :8046 AND HTTPS https://aihot.vn via same-origin relay)
     const dispatchCompanionCommand = useCallback(
-        async (action: 'new' | 'send' | 'pin' | 'cancel' | 'save_conv', payload: Record<string, any>): Promise<any> => {
+        async (
+            action: 'new' | 'send' | 'pin' | 'cancel' | 'cancel_queued' | 'save_conv' | 'open-chatgpt-pc',
+            payload: Record<string, any>
+        ): Promise<any> => {
             const authToken = safeAuthToken;
             const createdAtMs = Date.now();
             const ttlMs = 60000;
@@ -1074,9 +1332,26 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
         if (Array.isArray(data?.host?.instances) && data.host.instances.length > 0) {
             setHostInstances(data.host.instances);
         }
+        if (data?.activeAccount && typeof data.activeAccount === 'object') {
+            setPcActiveAgAccount(data.activeAccount);
+        }
         if (Array.isArray(data?.models) && data.models.length > 0) {
-            setModels(data.models);
-            setSelectedModel(prev => data.models.find((m: CompanionModel) => m.id === prev.id) || data.models[0]);
+            const normModels = normalizeModelList(data.models);
+            const pcDefId = String(data?.defaultModelId || normModels[0]?.id || '').trim();
+            pcDefaultModelIdRef.current.antigravity = pcDefId;
+            setModels(normModels);
+            setSelectedModel(prev => {
+                const ov = manualModelOverrideRef.current.antigravity;
+                if (ov && ov.modelId) {
+                    const picked = normModels.find(m => m.id === ov.modelId);
+                    if (picked) return picked;
+                }
+                const convMid = activeProviderRef.current === 'antigravity' ? activeConvModelIdRef.current : '';
+                const desiredId = convMid || pcDefId;
+                const desired = desiredId ? normModels.find(m => m.id === desiredId) : undefined;
+                if (desired) return desired;
+                return normModels.find(m => m.id === prev.id) || normModels[0];
+            });
         }
         if (Array.isArray(data?.pinnedConversations)) {
             setPinnedConversations(data.pinnedConversations);
@@ -1084,8 +1359,75 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
         if (Array.isArray(data?.projects)) {
             setProjects(data.projects);
         }
+        if (data?.antigravity2 && typeof data.antigravity2 === 'object') {
+            const ag2 = data.antigravity2;
+            if (ag2.host?.name) setAg2HostName(String(ag2.host.name));
+            if (typeof ag2.host?.online === 'boolean') setAg2Online(ag2.host.online);
+            if (ag2.activeAccount && typeof ag2.activeAccount === 'object') {
+                setPcActiveAg2Account(ag2.activeAccount);
+            }
+            if (Array.isArray(ag2.models) && ag2.models.length > 0) {
+                const normAg2Models = normalizeModelList(ag2.models);
+                const ag2DefId = String(ag2.defaultModelId || normAg2Models[0]?.id || '').trim();
+                pcDefaultModelIdRef.current.antigravity2 = ag2DefId;
+                setAg2Models(normAg2Models);
+                setAg2SelectedModel(prev => {
+                    const ov = manualModelOverrideRef.current.antigravity2;
+                    if (ov && ov.modelId) {
+                        const picked = normAg2Models.find(m => m.id === ov.modelId);
+                        if (picked) return picked;
+                    }
+                    const convMid = activeProviderRef.current === 'antigravity2' ? activeConvModelIdRef.current : '';
+                    const desiredId = convMid || ag2DefId;
+                    const desired = desiredId ? normAg2Models.find(m => m.id === desiredId) : undefined;
+                    if (desired) return desired;
+                    return normAg2Models.find(m => m.id === prev.id) || normAg2Models[0];
+                });
+            }
+            if (Array.isArray(ag2.pinnedConversations)) {
+                setAg2PinnedConversations(ag2.pinnedConversations);
+            }
+            if (Array.isArray(ag2.projects)) {
+                setAg2Projects(ag2.projects);
+            }
+        }
+        if (data?.win1 && typeof data.win1 === 'object') {
+            const w1 = data.win1;
+            if (w1.host?.name) setWin1HostName(String(w1.host.name));
+            if (typeof w1.host?.online === 'boolean') setWin1Online(w1.host.online);
+            if (w1.activeAccount && typeof w1.activeAccount === 'object') {
+                setPcActiveWin1Account(w1.activeAccount);
+            } else {
+                setPcActiveWin1Account(null);
+            }
+            if (Array.isArray(w1.models) && w1.models.length > 0) {
+                const normW1Models = normalizeModelList(w1.models);
+                const w1DefId = String(w1.defaultModelId || normW1Models[0]?.id || '').trim();
+                pcDefaultModelIdRef.current.win1 = w1DefId;
+                setWin1Models(normW1Models);
+                setWin1SelectedModel(prev => {
+                    const ov = manualModelOverrideRef.current.win1;
+                    if (ov && ov.modelId) {
+                        const picked = normW1Models.find(m => m.id === ov.modelId);
+                        if (picked) return picked;
+                    }
+                    const pcDef = w1DefId ? normW1Models.find(m => m.id === w1DefId) : undefined;
+                    if (pcDef) return pcDef;
+                    return normW1Models.find(m => m.id === prev.id) || normW1Models[0];
+                });
+            }
+            if (Array.isArray(w1.pinnedConversations)) {
+                setWin1PinnedConversations(w1.pinnedConversations);
+            }
+            if (Array.isArray(w1.projects)) {
+                setWin1Projects(w1.projects);
+            }
+        }
         if (data?.chatgpt) {
-            const cg: ChatGPTOverviewData = data.chatgpt;
+            const cg: ChatGPTOverviewData & { activeAccount?: any } = data.chatgpt;
+            if (cg.activeAccount && typeof cg.activeAccount === 'object') {
+                setPcActiveChatgptAccount(cg.activeAccount);
+            }
             if (Array.isArray(cg.models) && cg.models.length > 0) {
                 setChatgptModels(cg.models);
                 setChatgptSelectedModel(
@@ -1111,7 +1453,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
         }
         setIsLoadingOverview(false);
         setIsRefreshing(false);
-    }, [isSystemOwner]);
+    }, [isSystemOwner, normalizeModelList]);
 
     // Fetch overview from Companion Bridge (port 8046) or static snapshot fallback (strictly scoped by member)
     const fetchOverview = useCallback(async (silent = false) => {
@@ -1199,7 +1541,10 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
         const tcs = last?.toolCalls || [];
         const lastTcOut = tcs.length > 0 ? (tcs[tcs.length - 1]?.output?.length || 0) : 0;
         const lastTcStatus = tcs.length > 0 ? (tcs[tcs.length - 1]?.status || '') : '';
-        return `${d.id}:${d.status}:${d.isRunning}:${d.pinned}:${d.stepCount}:${msgs.length}:${last?.id || ''}:${last?.content?.length || 0}:${last?.thinking?.length || 0}:${tcs.length}:${lastTcOut}:${lastTcStatus}:${last?.completed ?? ''}`;
+        const ts = d.turnState;
+        const tsSig = ts ? `${ts.phase}:${ts.retryAttempt || 0}:${ts.maxRetries || 0}:${ts.lastError || ''}:${ts.queuedCount || 0}` : '';
+        const qpSig = (d.queuedPrompts || []).map(q => `${q.id}:${q.status}`).join(',');
+        return `${d.id}:${d.modelId || ''}:${d.status}:${d.isRunning}:${d.pinned}:${d.stepCount}:${msgs.length}:${last?.id || ''}:${last?.content?.length || 0}:${last?.thinking?.length || 0}:${tcs.length}:${lastTcOut}:${lastTcStatus}:${last?.completed ?? ''}:${tsSig}:${qpSig}`;
     }, []);
 
     // Fetch single conversation detail (parallel instant snapshot + live companion API, strictly scoped by member)
@@ -1256,7 +1601,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                 for (const base of candidates) {
                     try {
                         const res = await fetch(
-                            `${base}/api/ag-companion/conversation/${encodeURIComponent(cid)}?markRead=1&limit=400&memberId=${encodeURIComponent(effectiveMemberId)}`,
+                            `${base}/api/ag-companion/conversation/${encodeURIComponent(cid)}?markRead=1&limit=400&memberId=${encodeURIComponent(effectiveMemberId)}&provider=${encodeURIComponent(activeProvider)}`,
                             {
                                 headers: { Authorization: `Bearer ${safeAuthToken}` },
                                 signal: AbortSignal.timeout(6000)
@@ -1323,7 +1668,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
         }
 
         if (!silent && activeCidRef.current === cid) setIsLoadingConversation(false);
-    }, [getCompanionBaseUrls, isSystemOwner, safeMemberFolder, effectiveMemberId, member.id, originUrl, mergePendingUserMsg, computeConversationSig]);
+    }, [getCompanionBaseUrls, isSystemOwner, safeMemberFolder, effectiveMemberId, member.id, originUrl, mergePendingUserMsg, computeConversationSig, activeProvider]);
 
     // =========================================================================
     // REAL-TIME WEBSOCKET ENGINE (Direct Companion WS :8046/ws + Portal WS :8045)
@@ -1522,16 +1867,23 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
         if (sig !== prevMsgSignatureRef.current) {
             const isFirstOpen = !prevMsgSignatureRef.current.startsWith(`${activeConversation?.id || ''}:`);
             prevMsgSignatureRef.current = sig;
+            if (Date.now() < suppressAutoScrollUntilRef.current || pendingJumpMsgId) {
+                return;
+            }
             setTimeout(() => {
-                scrollMessagesToBottom(!isFirstOpen);
+                if (Date.now() >= suppressAutoScrollUntilRef.current) {
+                    scrollMessagesToBottom(!isFirstOpen);
+                }
             }, 60);
         }
-    }, [activeConversation, scrollMessagesToBottom]);
+    }, [activeConversation, scrollMessagesToBottom, pendingJumpMsgId]);
 
     // Navigate to a conversation (and push to Back/Forward history stack)
     const navigateToConversation = (cid: string | null, pushHistory = true) => {
         prevMsgSignatureRef.current = '';
         setVisibleGroupLimit(40);
+        setInConvMatchCursor(0);
+        setHighlightedMsgId(null);
         setActiveConversationId(cid);
         if (!cid) {
             setActiveConversation(null);
@@ -1565,46 +1917,289 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
         }
     };
 
-    // Handle opening a conversation from Pinned or Projects list
+    // Handle opening a conversation from Pinned, Projects list, or Deep Search
     const handleOpenConversation = (conv: CompanionConversationItem) => {
-        if (isChatGPT || conv.provider === 'chatgpt') {
+        const targetProv: 'antigravity' | 'antigravity2' | 'win1' | 'chatgpt' =
+            conv.provider === 'chatgpt'
+                ? 'chatgpt'
+                : conv.provider === 'antigravity2'
+                ? 'antigravity2'
+                : conv.provider === 'win1'
+                ? 'win1'
+                : activeProvider;
+        if (targetProv !== activeProvider) {
+            handleSwitchProvider(targetProv);
+        }
+        if (targetProv === 'chatgpt') {
             setChatgptTargetProjectId(conv.projectId);
             setChatgptTargetProjectName(conv.projectName);
+        } else if (targetProv === 'antigravity2') {
+            setAg2TargetProjectId(conv.projectId);
+            setAg2TargetProjectName(conv.projectName);
+        } else if (targetProv === 'win1') {
+            setWin1TargetProjectId(conv.projectId);
+            setWin1TargetProjectName(conv.projectName);
         } else {
             setTargetNewProjectId(conv.projectId);
             setTargetNewProjectName(conv.projectName);
         }
         setHistoryModalOpen(false);
+        setPendingJumpMsgId(conv.matchedMsgId ? String(conv.matchedMsgId) : null);
         navigateToConversation(conv.id, true);
         // Optimistically clear unread dot in UI
-        if (isChatGPT || conv.provider === 'chatgpt') {
-            setChatgptProjects(prev =>
-                prev.map(p => ({
-                    ...p,
-                    conversations: p.conversations.map(c => (c.id === conv.id ? { ...c, unread: false } : c))
-                }))
-            );
+        const clearUnread = (prev: CompanionProjectGroup[]) =>
+            prev.map(p => ({
+                ...p,
+                conversations: p.conversations.map(c => (c.id === conv.id ? { ...c, unread: false } : c))
+            }));
+        if (targetProv === 'chatgpt') {
+            setChatgptProjects(clearUnread);
+        } else if (targetProv === 'antigravity2') {
+            setAg2Projects(clearUnread);
+        } else if (targetProv === 'win1') {
+            setWin1Projects(clearUnread);
         } else {
-            setProjects(prev =>
-                prev.map(p => ({
-                    ...p,
-                    conversations: p.conversations.map(c => (c.id === conv.id ? { ...c, unread: false } : c))
-                }))
-            );
+            setProjects(clearUnread);
         }
     };
+
+    // Handoff query from Global Ctrl+K Quick Search Modal
+    useEffect(() => {
+        const applyHandoff = (qStr: string) => {
+            if (!qStr) return;
+            setSearchBarOpen(true);
+            setSearchQuery(qStr);
+            window.setTimeout(() => sidebarSearchInputRef.current?.focus(), 60);
+        };
+        try {
+            const raw = sessionStorage.getItem('aihot_conv_handoff');
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (parsed?.target === 'a1') {
+                    sessionStorage.removeItem('aihot_conv_handoff');
+                    applyHandoff(String(parsed.query || ''));
+                }
+            }
+        } catch {}
+        const onHandoff = (ev: Event) => {
+            const det = (ev as CustomEvent)?.detail;
+            if (det && det.target === 'a1') {
+                applyHandoff(String(det.query || ''));
+            }
+        };
+        window.addEventListener('aihot-conv-search-handoff', onHandoff);
+        return () => window.removeEventListener('aihot-conv-search-handoff', onHandoff);
+    }, []);
+
+    // Debounced Deep Backend Search across ALL Antigravity & ChatGPT transcripts (/api/ag-companion/search)
+    const activeBackendSearchQuery = historyModalOpen ? historySearchQuery : searchQuery;
+    useEffect(() => {
+        const qTrim = activeBackendSearchQuery.trim();
+        if (qTrim.length < 2) {
+            setDeepSearchResults([]);
+            setDeepSearchTotal(0);
+            setDeepSearchLoading(false);
+            setDeepSearchWarming(false);
+            return;
+        }
+        let cancelled = false;
+        const ac = new AbortController();
+        setDeepSearchLoading(true);
+
+        const runQuery = async (allowWarmRetry: boolean) => {
+            const urls = getCompanionBaseUrls();
+            const qs = `q=${encodeURIComponent(qTrim)}&provider=${encodeURIComponent(activeProvider)}&limit=60&deep=1`;
+            for (const base of urls) {
+                if (cancelled) return;
+                try {
+                    const res = await fetch(`${base}/api/ag-companion/search?${qs}`, {
+                        headers: { Authorization: `Bearer ${safeAuthToken}` },
+                        signal: ac.signal,
+                    });
+                    const ctype = (res.headers.get('content-type') || '').toLowerCase();
+                    if (!res.ok || !ctype.includes('json')) continue;
+                    const doc = await res.json();
+                    if (!cancelled && doc?.ok && Array.isArray(doc.results)) {
+                        setDeepSearchResults(doc.results as CompanionConversationItem[]);
+                        setDeepSearchTotal(Number(doc.totalHits ?? doc.results.length));
+                        setDeepSearchWarming(Boolean(doc.warming));
+                        if (doc.warming && allowWarmRetry) {
+                            window.setTimeout(() => {
+                                if (!cancelled) void runQuery(false);
+                            }, 550);
+                        }
+                        return;
+                    }
+                } catch {
+                    // try next base URL
+                }
+            }
+        };
+
+        const tm = window.setTimeout(() => {
+            void runQuery(true).finally(() => {
+                if (!cancelled) setDeepSearchLoading(false);
+            });
+        }, 210);
+
+        return () => {
+            cancelled = true;
+            ac.abort();
+            window.clearTimeout(tm);
+        };
+    }, [activeBackendSearchQuery, activeProvider, safeAuthToken, getCompanionBaseUrls]);
+
+    // In-conversation matching message IDs & jump-to-message helper
+    const inConvTokens = useMemo(() => tokenizeVnSearch(inConvSearchQuery), [inConvSearchQuery]);
+    const inConvMatchedMsgIds = useMemo(() => {
+        if (inConvTokens.length === 0 || !activeConversation?.messages) return [];
+        const out: string[] = [];
+        for (const msg of activeConversation.messages) {
+            const parts = [
+                msg.content || '',
+                msg.thinking || '',
+                msg.errorDetail || '',
+                msg.taskFinished?.summary || '',
+                msg.taskFinished?.output || '',
+                (msg.toolCalls || [])
+                    .map(tc => `${tc.name || ''} ${tc.summary || ''} ${tc.command || ''} ${tc.path || ''} ${tc.output || ''}`)
+                    .join(' '),
+            ];
+            if (matchesAllVnTokens(parts.join(' '), inConvTokens)) {
+                out.push(msg.id);
+            }
+        }
+        return out;
+    }, [activeConversation?.messages, inConvTokens]);
+
+    const jumpToMessageId = useCallback(
+        (targetMsgId: string) => {
+            const msgs = activeConversation?.messages || [];
+            if (!msgs.length || !targetMsgId) return;
+
+            const targetMsg = msgs.find(m => m.id === targetMsgId);
+            if (targetMsg) {
+                // Auto-expand thinking if match lives inside thinking box
+                if (targetMsg.thinking && inConvTokens.length > 0 && matchesAllVnTokens(targetMsg.thinking, inConvTokens)) {
+                    setExpandedThinking(prev => (prev[targetMsg.id] ? prev : { ...prev, [targetMsg.id]: true }));
+                }
+            }
+
+            // Recompute grouped window length so ancient messages become rendered
+            let groupIndexEstimate = -1;
+            let curWorkSteps: TrajectoryMessage[] = [];
+            let gCount = 0;
+            const checkFlushWork = () => {
+                if (!curWorkSteps.length) return;
+                const grpId = `wg_${curWorkSteps[0].id}_${curWorkSteps[curWorkSteps.length - 1].id}`;
+                if (curWorkSteps.some(s => s.id === targetMsgId)) {
+                    groupIndexEstimate = gCount;
+                    setExpandedWorkGroups(prev => (prev[grpId] ? prev : { ...prev, [grpId]: true }));
+                }
+                curWorkSteps = [];
+                gCount += 1;
+            };
+            for (const m of msgs) {
+                if (m.role === 'user') {
+                    checkFlushWork();
+                    if (m.id === targetMsgId) groupIndexEstimate = gCount;
+                    gCount += 1;
+                } else if (m.taskFinished || m.isError || ((m.toolCalls?.length || 0) > 0 && Boolean(m.content?.trim())) || (!m.toolCalls?.length && Boolean(m.content?.trim()))) {
+                    if ((m.toolCalls?.length || 0) > 0 && Boolean(m.content?.trim())) {
+                        curWorkSteps.push({ ...m, id: `${m.id}_work`, content: '' });
+                    }
+                    checkFlushWork();
+                    if (m.id === targetMsgId) groupIndexEstimate = gCount;
+                    gCount += 1;
+                } else {
+                    curWorkSteps.push(m);
+                }
+            }
+            checkFlushWork();
+
+            if (groupIndexEstimate >= 0) {
+                const neededFromEnd = Math.max(40, gCount - groupIndexEstimate + 10);
+                setVisibleGroupLimit(prev => Math.max(prev, neededFromEnd));
+            }
+
+            suppressAutoScrollUntilRef.current = Date.now() + 1800;
+            setHighlightedMsgId(targetMsgId);
+            window.setTimeout(() => {
+                const escaped =
+                    typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(targetMsgId) : targetMsgId.replace(/"/g, '\\"');
+                const el = document.querySelector(`[data-conv-msg-id="${escaped}"]`) as HTMLElement | null;
+                el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 90);
+            window.setTimeout(() => {
+                setHighlightedMsgId(prev => (prev === targetMsgId ? null : prev));
+            }, 2600);
+        },
+        [activeConversation?.messages, inConvTokens]
+    );
+
+    const stepInConvMatch = useCallback(
+        (delta: 1 | -1) => {
+            if (inConvMatchedMsgIds.length === 0) return;
+            const total = inConvMatchedMsgIds.length;
+            const nextPos = ((inConvMatchCursor + delta) % total + total) % total;
+            setInConvMatchCursor(nextPos);
+            jumpToMessageId(inConvMatchedMsgIds[nextPos]);
+        },
+        [inConvMatchedMsgIds, inConvMatchCursor, jumpToMessageId]
+    );
+
+    useEffect(() => {
+        if (pendingJumpMsgId && activeConversation?.messages && activeConversation.messages.length > 0) {
+            const exists = activeConversation.messages.some(m => m.id === pendingJumpMsgId);
+            if (exists) {
+                jumpToMessageId(pendingJumpMsgId);
+            }
+            setPendingJumpMsgId(null);
+        }
+    }, [pendingJumpMsgId, activeConversation?.id, activeConversation?.messages, jumpToMessageId]);
+
+    // Ctrl+F / `/` shortcuts inside Giao việc AI
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const onKeyDown = (e: KeyboardEvent) => {
+            const activeEl = document.activeElement as HTMLElement | null;
+            const isTyping = Boolean(
+                activeEl &&
+                    (activeEl.tagName === 'TEXTAREA' ||
+                        activeEl.tagName === 'INPUT' ||
+                        activeEl.tagName === 'SELECT' ||
+                        activeEl.isContentEditable)
+            );
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && activeConversationId) {
+                e.preventDefault();
+                setInConvSearchOpen(true);
+                window.setTimeout(() => inConvSearchInputRef.current?.focus(), 40);
+                return;
+            }
+            if (!isTyping && e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                e.preventDefault();
+                setSearchBarOpen(true);
+                window.setTimeout(() => sidebarSearchInputRef.current?.focus(), 40);
+                return;
+            }
+            if (e.key === 'Escape' && inConvSearchOpen) {
+                e.preventDefault();
+                if (activeEl === inConvSearchInputRef.current && inConvSearchQuery) {
+                    setInConvSearchQuery('');
+                    return;
+                }
+                setInConvSearchOpen(false);
+            }
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [activeConversationId, inConvSearchOpen, inConvSearchQuery]);
 
     // Handle clicking '+ New Conversation' or '+' next to a Project folder
     const handleStartNewInProject = (proj?: CompanionProjectGroup, e?: React.MouseEvent) => {
         if (e) e.stopPropagation();
         if (proj) {
-            if (isChatGPT) {
-                setChatgptTargetProjectId(proj.id);
-                setChatgptTargetProjectName(proj.name);
-            } else {
-                setTargetNewProjectId(proj.id);
-                setTargetNewProjectName(proj.name);
-            }
+            setEffectiveTargetProject(proj.id, proj.name);
         }
         navigateToConversation(null, true);
         setTimeout(() => {
@@ -1620,7 +2215,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
             const res = await dispatchCompanionCommand('pin', {
                 conversationId: cid,
                 pinned: nextPinned,
-                provider: isChatGPT ? 'chatgpt' : 'antigravity'
+                provider: activeProvider
             });
             if (res && res.ok !== false) {
                 if (activeConversation && activeConversation.id === cid) {
@@ -1631,6 +2226,10 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                     nextPinned
                         ? isChatGPT
                             ? 'Đã ghim vào Đã ghim (ChatGPT PC)'
+                            : isAg2
+                            ? 'Đã ghim vào Pinned Conversations (Antigravity 2)'
+                            : isWin1
+                            ? `Đã ghim vào Pinned Conversations (${win1HostName})`
                             : 'Đã ghim vào Pinned Conversations'
                         : 'Đã bỏ ghim hội thoại',
                     'success'
@@ -1638,6 +2237,28 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
             }
         } catch {
             onToast('Không thể cập nhật trạng thái ghim', 'error');
+        }
+    };
+
+    const [openingChatGptPc, setOpeningChatGptPc] = useState(false);
+
+    const handleOpenChatGptPc = async (cid: string) => {
+        if (!cid || openingChatGptPc) return;
+        setOpeningChatGptPc(true);
+        try {
+            const res = await dispatchCompanionCommand('open-chatgpt-pc', {
+                conversationId: cid,
+                provider: 'chatgpt'
+            });
+            if (res && res.ok) {
+                onToast('Đã mở phiên trên ChatGPT PC', 'success');
+            } else {
+                onToast(res?.error || 'Không mở được ChatGPT PC', 'error');
+            }
+        } catch (err: any) {
+            onToast(err?.message || 'Không kết nối được cầu nối PC', 'error');
+        } finally {
+            setOpeningChatGptPc(false);
         }
     };
 
@@ -1707,8 +2328,19 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
             if (!rawUrl) return '';
             if (rawUrl.startsWith('data:') || rawUrl.startsWith('blob:')) return rawUrl;
             const sep = rawUrl.includes('?') ? '&' : '?';
+            if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
+                try {
+                    const parsed = new URL(rawUrl);
+                    const sameOrigin =
+                        (typeof window !== 'undefined' && parsed.origin === window.location.origin) ||
+                        (originUrl && parsed.origin === new URL(originUrl).origin);
+                    if (!sameOrigin) return rawUrl;
+                } catch {
+                    return rawUrl;
+                }
+                return safeAuthToken ? `${rawUrl}${sep}key=${encodeURIComponent(safeAuthToken)}` : rawUrl;
+            }
             const withKey = safeAuthToken ? `${rawUrl}${sep}key=${encodeURIComponent(safeAuthToken)}` : rawUrl;
-            if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) return withKey;
             if (typeof window !== 'undefined' && window.location.protocol === 'http:') {
                 return `http://${window.location.hostname}:8046${withKey}`;
             }
@@ -2043,7 +2675,8 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
     const handleSubmitPrompt = async () => {
         const text = promptText.trim();
         const mediaToSend = [...attachedMedia];
-        if ((!text && mediaToSend.length === 0) || isSubmitting) return;
+        if ((!text && mediaToSend.length === 0) || isSubmitting || isSubmittingRef.current) return;
+        isSubmittingRef.current = true;
 
         setPromptText('');
         setAttachedMedia([]);
@@ -2070,16 +2703,20 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
             size: m.size
         }));
 
-        // Case 1: Inside an existing conversation -> send follow-up via SendUserCascadeMessage or Codex exec resume
+        // Case 1: Inside an existing conversation -> send follow-up via SendUserCascadeMessage or queue if busy
         if (activeConversationId && !activeConversationId.startsWith('pending_')) {
             const targetCid = activeConversationId;
+            const prevWasRunning = Boolean(activeConversation?.isRunning);
+            const prevStatus = activeConversation?.status || 'CASCADE_RUN_STATUS_IDLE';
+            const preSendBaseline = capturePreSendBaseline(activeConversation?.messages);
             pendingUserMsgsRef.current[targetCid] = {
                 text,
                 media: mediaToSend,
                 sentAt: nowMs,
                 title: activeConversation?.title || autoTitle,
                 projectId: activeConversation?.projectId || effectiveTargetProjectId,
-                projectName: activeConversation?.projectName || effectiveTargetProjectName
+                projectName: activeConversation?.projectName || effectiveTargetProjectName,
+                ...preSendBaseline
             };
             const optimisticUserMsg: TrajectoryMessage = {
                 id: `opt_u_${nowMs}`,
@@ -2102,28 +2739,89 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
 
             const sendCmdId = `cmd_${nowMs}_${Math.random().toString(36).slice(2, 8)}`;
             activePendingCmdIdRef.current = sendCmdId;
+            const rollbackOptimisticSend = () => {
+                delete pendingUserMsgsRef.current[targetCid];
+                setActiveConversation(prev =>
+                    prev && prev.id === targetCid
+                        ? {
+                              ...prev,
+                              isRunning: prevWasRunning,
+                              status: prevStatus,
+                              stepCount: Math.max(0, (prev.stepCount || 1) - 1),
+                              messages: prev.messages.filter(m => m.id !== optimisticUserMsg.id)
+                          }
+                        : prev
+                );
+                setPromptText(curr => (curr ? curr : text));
+                if (mediaToSend.length > 0) {
+                    setAttachedMedia(curr => (curr.length > 0 ? curr : mediaToSend));
+                }
+                isSubmittingRef.current = false;
+                setIsSubmitting(false);
+            };
             try {
                 const res = await dispatchCompanionCommand('send', {
                     cmdId: sendCmdId,
-                    provider: isChatGPT ? 'chatgpt' : 'antigravity',
+                    provider: activeProvider,
                     conversationId: targetCid,
                     text,
                     media: payloadMedia,
                     model: effectiveSelectedModel.id,
-                    app: isChatGPT ? 'chatgpt' : selectedHostId
+                    app: isChatGPT ? 'chatgpt' : isAg2 ? 'acct2' : isWin1 ? 'win1' : selectedHostId
                 });
                 if (res && res.ok === true && !res.memberUseCloudStream) {
+                    delete manualModelOverrideRef.current[activeProvider];
+                    if (res.queued) {
+                        delete pendingUserMsgsRef.current[targetCid];
+                        const qId = String(res.queueId || sendCmdId);
+                        const queuedItem: QueuedPromptItem = {
+                            id: qId,
+                            cmdId: sendCmdId,
+                            content: text,
+                            media: res.media || (mediaToSend.length > 0 ? mediaToSend : undefined),
+                            model: effectiveSelectedModel.id,
+                            status: 'queued',
+                            createdAt: nowMs
+                        };
+                        setActiveConversation(prev => {
+                            if (!prev || prev.id !== targetCid) return prev;
+                            const existingQ = Array.isArray(prev.queuedPrompts) ? prev.queuedPrompts : [];
+                            const hasQ = existingQ.some(q => q.id === qId || (q.cmdId && q.cmdId === sendCmdId));
+                            const nextQ = hasQ ? existingQ : [...existingQ, queuedItem];
+                            return {
+                                ...prev,
+                                stepCount: Math.max(0, (prev.stepCount || 1) - 1),
+                                messages: prev.messages.filter(m => m.id !== optimisticUserMsg.id),
+                                queuedPrompts: nextQ,
+                                turnState: {
+                                    ...(prev.turnState || { phase: 'running' }),
+                                    queuedCount: nextQ.length
+                                }
+                            };
+                        });
+                        onToast('Đã xếp hàng prompt chờ lượt hiện tại kết thúc', 'info');
+                    } else if (pendingUserMsgsRef.current[targetCid]) {
+                        pendingUserMsgsRef.current[targetCid] = {
+                            ...pendingUserMsgsRef.current[targetCid],
+                            media: res.media || mediaToSend
+                        };
+                    }
+                    isSubmittingRef.current = false;
                     setIsSubmitting(false);
                     fetchOverview(true);
-                    setTimeout(() => fetchConversationDetail(targetCid, true), 400);
+                    setTimeout(() => fetchConversationDetail(targetCid, true), 350);
                     return;
                 }
                 if (isSystemOwner) {
-                    setIsSubmitting(false);
+                    rollbackOptimisticSend();
                     onToast(
                         res?.error ||
                             (isChatGPT
                                 ? 'Không gửi được tin nhắn tới ChatGPT PC'
+                                : isAg2
+                                ? 'Không gửi được tin nhắn tới Antigravity 2 (acct2) trên PC'
+                                : isWin1
+                                ? `Không gửi được tin nhắn tới ${win1HostName}`
                                 : 'Không gửi được tin nhắn tới Antigravity trên PC'),
                         'error'
                     );
@@ -2131,7 +2829,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                 }
             } catch (err: any) {
                 if (isSystemOwner) {
-                    setIsSubmitting(false);
+                    rollbackOptimisticSend();
                     onToast(`Cầu nối PC không phản hồi (đã hủy lệnh chờ để tránh chạy trễ): ${err?.message || 'Timeout'}`, 'error');
                     return;
                 }
@@ -2141,8 +2839,15 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                 }
             }
 
-            if (isSystemOwner) return;
-            await streamViaCloudProxy(text, activeConversation, mediaToSend);
+            if (isSystemOwner) {
+                isSubmittingRef.current = false;
+                return;
+            }
+            try {
+                await streamViaCloudProxy(text, activeConversation, mediaToSend);
+            } finally {
+                isSubmittingRef.current = false;
+            }
             return;
         }
 
@@ -2173,10 +2878,24 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
 
         const newCmdId = `cmd_${nowMs}_${Math.random().toString(36).slice(2, 8)}`;
         activePendingCmdIdRef.current = newCmdId;
+        const rollbackOptimisticNew = () => {
+            if (activeCidRef.current === pendingCid) {
+                activeCidRef.current = null;
+            }
+            setActiveConversation(prev => (prev && prev.id === pendingCid ? null : prev));
+            navigateToConversation(null, true);
+            setPromptText(curr => (curr ? curr : text));
+            if (mediaToSend.length > 0) {
+                setAttachedMedia(curr => (curr.length > 0 ? curr : mediaToSend));
+            }
+            isSubmittingRef.current = false;
+            setIsSubmitting(false);
+        };
         try {
             const data = await dispatchCompanionCommand('new', {
                 cmdId: newCmdId,
-                provider: isChatGPT ? 'chatgpt' : 'antigravity',
+                provider: activeProvider,
+                app: isChatGPT ? 'chatgpt' : isAg2 ? 'acct2' : isWin1 ? 'win1' : selectedHostId,
                 projectId: effectiveTargetProjectId,
                 prompt: text,
                 media: payloadMedia,
@@ -2184,6 +2903,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                 title: autoTitle
             });
             if (data && data.ok === true && data.conversationId && !data.memberUseCloudStream) {
+                delete manualModelOverrideRef.current[activeProvider];
                 const newCid = String(data.conversationId);
                 pendingUserMsgsRef.current[newCid] = {
                     text,
@@ -2191,27 +2911,34 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                     sentAt: nowMs,
                     title: data.title || autoTitle,
                     projectId: effectiveTargetProjectId,
-                    projectName: effectiveTargetProjectName
+                    projectName: effectiveTargetProjectName,
+                    preSendUserCount: 0
                 };
                 const realConv: ConversationDetail = {
                     ...optimisticConv,
                     id: newCid,
+                    modelId: effectiveSelectedModel.id,
                     title: data.title || autoTitle
                 };
                 activeCidRef.current = newCid;
                 setActiveConversation(realConv);
                 navigateToConversation(newCid, true);
+                isSubmittingRef.current = false;
                 setIsSubmitting(false);
                 fetchOverview(true);
                 setTimeout(() => fetchConversationDetail(newCid, true), 500);
                 return;
             }
             if (isSystemOwner) {
-                setIsSubmitting(false);
+                rollbackOptimisticNew();
                 onToast(
                     data?.error ||
                         (isChatGPT
                             ? 'Không tạo được phiên mới trên ChatGPT PC'
+                            : isAg2
+                            ? 'Không tạo được phiên mới trên Antigravity 2 (acct2)'
+                            : isWin1
+                            ? `Không tạo được phiên mới trên ${win1HostName}`
                             : 'Không tạo được phiên mới trên Antigravity PC'),
                     'error'
                 );
@@ -2219,7 +2946,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
             }
         } catch (err: any) {
             if (isSystemOwner) {
-                setIsSubmitting(false);
+                rollbackOptimisticNew();
                 onToast(`Cầu nối PC không phản hồi (đã hủy lệnh chờ để tránh mở trễ): ${err?.message || 'Timeout'}`, 'error');
                 return;
             }
@@ -2229,11 +2956,19 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
             }
         }
 
-        if (isSystemOwner) return;
-        await streamViaCloudProxy(text, null, mediaToSend);
+        if (isSystemOwner) {
+            isSubmittingRef.current = false;
+            return;
+        }
+        try {
+            await streamViaCloudProxy(text, null, mediaToSend);
+        } finally {
+            isSubmittingRef.current = false;
+        }
     };
 
     const handleCancelRunning = async () => {
+        if (isCancelling) return;
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
         }
@@ -2270,13 +3005,58 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                 signal: AbortSignal.timeout(3000)
             }).catch(() => {});
         }
-        if (activeConversationId && !activeConversationId.startsWith('local_') && !activeConversationId.startsWith('pending_')) {
-            try {
-                await dispatchCompanionCommand('cancel', { conversationId: activeConversationId });
-            } catch {}
+        setIsCancelling(true);
+        try {
+            if (activeConversationId && !activeConversationId.startsWith('local_') && !activeConversationId.startsWith('pending_')) {
+                const res = await dispatchCompanionCommand('cancel', {
+                    conversationId: activeConversationId,
+                    provider: activeProvider,
+                    app: isChatGPT ? 'chatgpt' : isAg2 ? 'acct2' : isWin1 ? 'win1' : selectedHostId
+                });
+                fetchOverview(true);
+                await fetchConversationDetail(activeConversationId, true);
+                if (res && res.confirmedIdle === false) {
+                    onToast(res?.error || 'Chưa xác nhận được lượt cũ đã dừng hẳn, vui lòng thử lại', 'error');
+                } else if (res?.dispatchedQueued) {
+                    onToast('Đã dừng lượt cũ và bắt đầu chạy prompt đang chờ', 'success');
+                } else {
+                    onToast('Đã dừng tác vụ và xác nhận phiên rảnh', 'info');
+                }
+            } else {
+                onToast('Đã dừng tác vụ đang chạy', 'info');
+            }
+        } catch (err: any) {
+            onToast(`Không gửi được lệnh dừng: ${err?.message || 'Lỗi kết nối'}`, 'error');
+        } finally {
+            setIsCancelling(false);
+            setIsSubmitting(false);
         }
-        setIsSubmitting(false);
-        onToast('Đã gửi lệnh dừng tác vụ', 'info');
+    };
+
+    const handleCancelQueuedPrompt = async (queueId?: string) => {
+        if (!activeConversationId) return;
+        try {
+            const res = await dispatchCompanionCommand('cancel_queued', {
+                conversationId: activeConversationId,
+                queueId: queueId || ''
+            });
+            if (res?.ok) {
+                setActiveConversation(prev => {
+                    if (!prev || prev.id !== activeConversationId) return prev;
+                    const nextQ = (prev.queuedPrompts || []).filter(q => (queueId ? q.id !== queueId : false));
+                    return {
+                        ...prev,
+                        queuedPrompts: nextQ,
+                        turnState: prev.turnState ? { ...prev.turnState, queuedCount: nextQ.length } : prev.turnState
+                    };
+                });
+                onToast('Đã hủy prompt đang chờ', 'info');
+                fetchOverview(true);
+                fetchConversationDetail(activeConversationId, true);
+            }
+        } catch {
+            onToast('Không hủy được prompt đang chờ', 'error');
+        }
     };
 
     const handleCopyCode = (code: string, id: string) => {
@@ -2285,7 +3065,373 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
         setTimeout(() => setCopiedCodeId(null), 1800);
     };
 
+    const openCustomizationsModal = async () => {
+        setCustomizationsModalOpen(true);
+        const prov = activeProvider;
+        if (customData && customData.provider === prov) return;
+        setCustomData(null);
+        for (const base of getCompanionBaseUrls()) {
+            try {
+                const r = await fetch(
+                    `${base}/api/ag-companion/customizations?provider=${encodeURIComponent(prov)}`,
+                    {
+                        headers: { Authorization: `Bearer ${safeAuthToken}` },
+                        signal: AbortSignal.timeout(4000)
+                    }
+                );
+                if (r.ok) {
+                    const d = await r.json();
+                    if (d && d.ok) {
+                        setCustomData({ ...d, provider: prov });
+                        break;
+                    }
+                }
+            } catch {}
+        }
+    };
+
+    const isUuidLike = (val?: string): boolean =>
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(val || '').trim());
+
+    const formatAiTierBadge = (
+        rawTier?: string,
+        provider: 'antigravity' | 'antigravity2' | 'win1' | 'chatgpt' = 'antigravity'
+    ): string => {
+        const t = String(rawTier || '').trim().toUpperCase();
+        if (!t) return '';
+        if (provider === 'chatgpt') {
+            if (t === 'PLUS') return 'ChatGPT Plus';
+            if (t === 'PRO') return 'ChatGPT Pro';
+            if (t === 'TEAM') return 'ChatGPT Team';
+            return t;
+        }
+        if (t.includes('ULTRA')) return 'Gemini Ultra';
+        if (t.includes('PRO')) return 'Gemini Pro';
+        if (t.includes('FREE')) return 'Free';
+        return t;
+    };
+
+    const deriveAccountInitials = (name?: string, email?: string, fallback = 'AI'): string => {
+        const n = String(name || '').trim();
+        const agMatch = n.match(/\bAG\s*(\d{1,2})\b/i);
+        if (agMatch) {
+            return `A${agMatch[1]}`.slice(0, 3).toUpperCase();
+        }
+        const cleaned = n.replace(/[^A-Za-z0-9]/g, '');
+        if (cleaned.length >= 2) return cleaned.slice(0, 2).toUpperCase();
+        if (cleaned.length === 1) return cleaned.toUpperCase();
+        const em = String(email || '')
+            .trim()
+            .split('@')[0]
+            .replace(/[^A-Za-z0-9]/g, '');
+        if (em.length >= 2) return em.slice(0, 2).toUpperCase();
+        return fallback.slice(0, 2).toUpperCase();
+    };
+
+    const findMatchedPortalAccount = useCallback(
+        (id?: string, email?: string) => {
+            if (!Array.isArray(permittedAccounts) || permittedAccounts.length === 0) return null;
+            const normEmail = String(email || '').trim().toLowerCase();
+            const normId = String(id || '').trim();
+            return (
+                permittedAccounts.find((a: any) => {
+                    const ae = String(a?.email || '').trim().toLowerCase();
+                    if (normEmail && ae && ae === normEmail) return true;
+                    return Boolean(normId && a?.id && String(a.id).trim() === normId);
+                }) || null
+            );
+        },
+        [permittedAccounts]
+    );
+
     const avatarInitials = (member.username || 'vu').slice(0, 2).toLowerCase();
+    const resolvedActiveAgAccount = useMemo(() => {
+        if (isSystemOwner && pcActiveAgAccount && (pcActiveAgAccount.email || pcActiveAgAccount.name || pcActiveAgAccount.id)) {
+            const portalMatch = findMatchedPortalAccount(pcActiveAgAccount.id, pcActiveAgAccount.email);
+            const email = String(pcActiveAgAccount.email || portalMatch?.email || '').trim();
+            const rawBridgeName = !isUuidLike(pcActiveAgAccount.name) ? String(pcActiveAgAccount.name || '').trim() : '';
+            const name = String(
+                portalMatch?.custom_label || rawBridgeName || portalMatch?.name || (email ? email.split('@')[0] : '')
+            ).trim();
+            let tier = String(
+                pcActiveAgAccount.tier || portalMatch?.subscription_tier || portalMatch?.quota?.subscription_tier || ''
+            )
+                .trim()
+                .toUpperCase();
+            if (!tier && /\bULTRA\b/i.test(name)) tier = 'ULTRA';
+            if (email || name) {
+                return {
+                    id: String(pcActiveAgAccount.id || portalMatch?.id || ''),
+                    email,
+                    name: name || email,
+                    tier,
+                    source: pcActiveAgAccount.source || 'Live PC'
+                };
+            }
+        }
+        const curPortalAcc = Array.isArray(permittedAccounts)
+            ? permittedAccounts.find((a: any) => a?.is_current)
+            : null;
+        if (curPortalAcc) {
+            const name = String(curPortalAcc.custom_label || curPortalAcc.name || '').trim();
+            let tier = String(
+                curPortalAcc.subscription_tier || curPortalAcc.quota?.subscription_tier || ''
+            )
+                .trim()
+                .toUpperCase();
+            if (!tier && /\bULTRA\b/i.test(name)) tier = 'ULTRA';
+            return {
+                id: curPortalAcc.id || '',
+                email: curPortalAcc.email || '',
+                name,
+                tier,
+                source: 'Kho AIHOT'
+            };
+        }
+        return null;
+    }, [isSystemOwner, pcActiveAgAccount, permittedAccounts, findMatchedPortalAccount]);
+
+    const resolvedActiveAg2Account = useMemo(() => {
+        if (isSystemOwner && pcActiveAg2Account && (pcActiveAg2Account.email || pcActiveAg2Account.name || pcActiveAg2Account.id)) {
+            const portalMatch = findMatchedPortalAccount(pcActiveAg2Account.id, pcActiveAg2Account.email);
+            const email = String(pcActiveAg2Account.email || portalMatch?.email || '').trim();
+            const rawBridgeName = !isUuidLike(pcActiveAg2Account.name) ? String(pcActiveAg2Account.name || '').trim() : '';
+            const name = String(
+                portalMatch?.custom_label || rawBridgeName || portalMatch?.name || (email ? email.split('@')[0] : '')
+            ).trim();
+            let tier = String(
+                pcActiveAg2Account.tier || portalMatch?.subscription_tier || portalMatch?.quota?.subscription_tier || ''
+            )
+                .trim()
+                .toUpperCase();
+            if (!tier && /\bULTRA\b/i.test(name)) tier = 'ULTRA';
+            return {
+                id: String(pcActiveAg2Account.id || portalMatch?.id || ''),
+                email,
+                name: name || email,
+                tier,
+                source: pcActiveAg2Account.source || 'WinCred acct2',
+                online: Boolean(pcActiveAg2Account.online)
+            };
+        }
+        return null;
+    }, [isSystemOwner, pcActiveAg2Account, findMatchedPortalAccount]);
+
+    const resolvedActiveWin1Account = useMemo(() => {
+        if (
+            isSystemOwner &&
+            pcActiveWin1Account &&
+            (pcActiveWin1Account.email || pcActiveWin1Account.name || pcActiveWin1Account.id || win1Online)
+        ) {
+            const portalMatch = findMatchedPortalAccount(pcActiveWin1Account.id, pcActiveWin1Account.email);
+            const email = String(pcActiveWin1Account.email || portalMatch?.email || '').trim();
+            const rawBridgeName = !isUuidLike(pcActiveWin1Account.name) ? String(pcActiveWin1Account.name || '').trim() : '';
+            const name = String(
+                portalMatch?.custom_label || rawBridgeName || portalMatch?.name || (email ? email.split('@')[0] : '') || win1HostName
+            ).trim();
+            let tier = String(
+                pcActiveWin1Account.tier || portalMatch?.subscription_tier || portalMatch?.quota?.subscription_tier || ''
+            )
+                .trim()
+                .toUpperCase();
+            if (!tier && /\bULTRA\b/i.test(name)) tier = 'ULTRA';
+            return {
+                id: String(pcActiveWin1Account.id || portalMatch?.id || 'win1'),
+                email,
+                name: name || win1HostName,
+                tier,
+                source: pcActiveWin1Account.source || `${win1HostName} (@win1)`,
+                online: Boolean(pcActiveWin1Account.online ?? win1Online)
+            };
+        }
+        return null;
+    }, [isSystemOwner, pcActiveWin1Account, win1Online, win1HostName, findMatchedPortalAccount]);
+
+    const resolvedActiveChatgptAccount = useMemo(() => {
+        if (
+            isSystemOwner &&
+            pcActiveChatgptAccount &&
+            (pcActiveChatgptAccount.email || pcActiveChatgptAccount.accountId)
+        ) {
+            return {
+                accountId: pcActiveChatgptAccount.accountId || '',
+                email: pcActiveChatgptAccount.email || '',
+                name: pcActiveChatgptAccount.name || '',
+                planType: (pcActiveChatgptAccount.planType || chatgptQuota?.planType || '').toUpperCase(),
+                source: pcActiveChatgptAccount.source || 'Live PC (.codex)'
+            };
+        }
+        if (chatgptQuota?.planType) {
+            return {
+                accountId: '',
+                email: '',
+                name: 'ChatGPT PC',
+                planType: String(chatgptQuota.planType).toUpperCase(),
+                source: 'Codex PC'
+            };
+        }
+        return null;
+    }, [isSystemOwner, pcActiveChatgptAccount, chatgptQuota]);
+
+    const formatLoginEmail = useCallback(
+        (rawEmail?: string) => {
+            const val = String(rawEmail || '').trim();
+            if (!val) return '';
+            if (isSystemOwner && showAccountEmails) return val;
+            return maskEmailAddress(val, true);
+        },
+        [isSystemOwner, showAccountEmails]
+    );
+
+    const toggleAccountEmailMask = useCallback(() => {
+        setShowAccountEmails(prev => {
+            const next = !prev;
+            setEmailMaskEnabled(!next);
+            return next;
+        });
+    }, []);
+
+    const roleDisplayLabel = useMemo(() => {
+        const r = String(member.role || 'member').toLowerCase();
+        if (r === 'admin' || isSystemOwner) return 'Admin';
+        if (r === 'guest') return 'Khách';
+        return 'Thành viên';
+    }, [member.role, isSystemOwner]);
+
+    const resolvedHeaderAccount = useMemo(() => {
+        const buildHeaderIdentity = (
+            providerLabel: string,
+            rawName: string,
+            rawEmail: string,
+            rawTier: string,
+            provider: 'antigravity' | 'antigravity2' | 'win1' | 'chatgpt',
+            fallbackName: string,
+            fallbackInitials: string,
+            fallbackBadge: string
+        ) => {
+            const email = String(rawEmail || '').trim();
+            const formattedEmail = email ? formatLoginEmail(email) : '';
+            const displayName = String(rawName || '').trim() || formattedEmail || fallbackName;
+            const showSeparateEmail = Boolean(
+                formattedEmail &&
+                    displayName.toLowerCase() !== formattedEmail.toLowerCase() &&
+                    displayName.toLowerCase() !== email.toLowerCase()
+            );
+            const tierUpper = String(rawTier || '').trim().toUpperCase();
+            const tierBadge = formatAiTierBadge(tierUpper, provider) || fallbackBadge;
+            const isUltra = tierUpper.includes('ULTRA');
+            const avatarBgClass =
+                provider === 'chatgpt'
+                    ? 'bg-[#10a37f]'
+                    : provider === 'win1'
+                    ? 'bg-[#0891b2]'
+                    : provider === 'antigravity2'
+                    ? isUltra
+                        ? 'bg-[#6d28d9]'
+                        : 'bg-[#004d40]'
+                    : isUltra
+                    ? 'bg-[#4f46e5]'
+                    : 'bg-[#004d40]';
+            const badgeClass =
+                provider === 'chatgpt'
+                    ? 'bg-[#e6f7f1] text-[#0b7a5d]'
+                    : provider === 'win1'
+                    ? 'bg-[#e0f2fe] text-[#0369a1]'
+                    : provider === 'antigravity2'
+                    ? isUltra
+                        ? 'bg-[#f3e8ff] text-[#6d28d9]'
+                        : 'bg-[#eef4ff] text-[#1967d2]'
+                    : isUltra
+                    ? 'bg-[#eef2ff] text-[#4338ca]'
+                    : 'bg-[#eef4ff] text-[#1967d2]';
+
+            return {
+                providerLabel,
+                displayName,
+                email,
+                formattedEmail,
+                showSeparateEmail,
+                tier: tierUpper,
+                tierBadge,
+                initials: deriveAccountInitials(rawName, email, fallbackInitials),
+                avatarBgClass,
+                badgeClass
+            };
+        };
+
+        if (activeProvider === 'chatgpt') {
+            if (!resolvedActiveChatgptAccount) return null;
+            return buildHeaderIdentity(
+                'ChatGPT PC',
+                resolvedActiveChatgptAccount.name || '',
+                resolvedActiveChatgptAccount.email || '',
+                resolvedActiveChatgptAccount.planType || '',
+                'chatgpt',
+                'ChatGPT PC',
+                'CG',
+                'ChatGPT'
+            );
+        }
+        if (activeProvider === 'antigravity2') {
+            if (!resolvedActiveAg2Account) return null;
+            return buildHeaderIdentity(
+                'AG2 · Antigravity 2',
+                resolvedActiveAg2Account.name || '',
+                resolvedActiveAg2Account.email || '',
+                resolvedActiveAg2Account.tier || '',
+                'antigravity2',
+                'AG2 · Antigravity 2',
+                'A2',
+                'AG 2'
+            );
+        }
+        if (activeProvider === 'win1') {
+            if (!resolvedActiveWin1Account) return null;
+            return buildHeaderIdentity(
+                `AG3 · ${win1HostName}`,
+                resolvedActiveWin1Account.name || win1HostName,
+                resolvedActiveWin1Account.email || '',
+                resolvedActiveWin1Account.tier || '',
+                'win1',
+                `AG3 · ${win1HostName}`,
+                'A3',
+                'AG 3'
+            );
+        }
+        if (!resolvedActiveAgAccount) return null;
+        return buildHeaderIdentity(
+            'AG1 · Antigravity',
+            resolvedActiveAgAccount.name || '',
+            resolvedActiveAgAccount.email || '',
+            resolvedActiveAgAccount.tier || '',
+            'antigravity',
+            'AG1 · Antigravity',
+            'A1',
+            'AG 1'
+        );
+    }, [
+        activeProvider,
+        resolvedActiveAgAccount,
+        resolvedActiveAg2Account,
+        resolvedActiveWin1Account,
+        win1HostName,
+        resolvedActiveChatgptAccount,
+        formatLoginEmail
+    ]);
+
+    const headerAccountTooltip = useMemo(() => {
+        if (!resolvedHeaderAccount) {
+            return `Đang đăng nhập: ${member.display_name || member.username} (@${member.username})`;
+        }
+        const masked = resolvedHeaderAccount.email ? formatLoginEmail(resolvedHeaderAccount.email) : '';
+        const parts = [
+            `${resolvedHeaderAccount.providerLabel}: ${resolvedHeaderAccount.displayName}`,
+            masked,
+            resolvedHeaderAccount.tierBadge,
+            `Portal: @${member.username}`
+        ].filter(Boolean);
+        return `${parts.join(' · ')} · Bấm để xem chi tiết`;
+    }, [resolvedHeaderAccount, member.display_name, member.username, formatLoginEmail]);
 
     const splitMarkdownTableRow = (rowLine: string): string[] => {
         let s = rowLine.trim();
@@ -2762,7 +3908,16 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                     </em>
                 );
             }
-            return part;
+            return inConvSearchQuery.trim() ? (
+                <HighlightText
+                    key={i}
+                    text={part}
+                    query={inConvSearchQuery}
+                    markClassName={isLight ? undefined : 'bg-amber-400/35 text-[#fff3cd] rounded px-0.5 font-semibold'}
+                />
+            ) : (
+                part
+            );
         });
     };
 
@@ -2788,8 +3943,15 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
 
     const renderSingleStepBody = (msg: TrajectoryMessage, isLight: boolean) => {
         const isThinkOpen = !!expandedThinking[msg.id];
+        const isMsgHighlighted = highlightedMsgId === msg.id;
         return (
-            <div key={`step_body_${msg.id}`} className="space-y-2.5">
+            <div
+                key={`step_body_${msg.id}`}
+                data-conv-msg-id={msg.id}
+                className={`space-y-2.5 rounded-xl transition-all ${
+                    isMsgHighlighted ? 'ring-2 ring-amber-400/90 bg-amber-400/10 p-2 -mx-2' : ''
+                }`}
+            >
                 {msg.thinking && (
                     <div
                         className={`rounded-xl border overflow-hidden ${
@@ -2931,8 +4093,77 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                 )}
 
                 {renderMessageMedia(msg, isLight)}
-                {msg.content && (
-                    <div className="pl-0.5">{renderFormattedContent(msg.content, msg.id, isLight)}</div>
+                {msg.isError ? (
+                    <div
+                        className={`rounded-xl border px-3.5 py-2.5 space-y-1 ${
+                            isLight
+                                ? 'bg-[#fff8f7] border-[#f5c2c0] text-[#3c4043]'
+                                : 'bg-[#2a1f1f]/70 border-[#5c3232] text-[#e8eaed]'
+                        }`}
+                    >
+                        <div
+                            onClick={() => {
+                                if (!msg.errorDetail) return;
+                                if (typeof window !== 'undefined' && window.getSelection()?.toString()) return;
+                                setExpandedThinking(prev => ({
+                                    ...prev,
+                                    [`err_${msg.id}`]: !prev[`err_${msg.id}`]
+                                }));
+                            }}
+                            className={`w-full flex items-start justify-between gap-2 text-left text-[13.5px] leading-snug select-text ${
+                                msg.errorDetail ? 'cursor-pointer' : ''
+                            }`}
+                        >
+                            <span className="break-words select-text">
+                                <strong className={isLight ? 'text-[#c5221f]' : 'text-[#f28b82]'}>Lỗi </strong>
+                                {maskEmailsInText(msg.content)}
+                            </span>
+                            {msg.errorDetail && (
+                                <button
+                                    type="button"
+                                    aria-label={expandedThinking[`err_${msg.id}`] ? 'Ẩn chi tiết lỗi' : 'Xem chi tiết lỗi'}
+                                    onClick={e => {
+                                        e.stopPropagation();
+                                        setExpandedThinking(prev => ({
+                                            ...prev,
+                                            [`err_${msg.id}`]: !prev[`err_${msg.id}`]
+                                        }));
+                                    }}
+                                    className="p-0.5 rounded hover:bg-black/5 shrink-0 select-none"
+                                >
+                                    <ChevronRight
+                                        className={`w-3.5 h-3.5 mt-0.5 opacity-70 transition-transform ${
+                                            expandedThinking[`err_${msg.id}`] ? 'rotate-90' : ''
+                                        }`}
+                                    />
+                                </button>
+                            )}
+                        </div>
+                        {msg.errorCode && (
+                            <div
+                                className={`text-[12px] font-mono break-all ${
+                                    isLight ? 'text-[#5f6368]' : 'text-[#9aa0a6]'
+                                }`}
+                            >
+                                Mã lỗi: {msg.errorCode}
+                            </div>
+                        )}
+                        {msg.errorDetail && expandedThinking[`err_${msg.id}`] && (
+                            <pre
+                                className={`mt-1.5 pt-1.5 border-t text-[12px] font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto ${
+                                    isLight
+                                        ? 'border-[#f1d3d1] text-[#5f6368]'
+                                        : 'border-[#4a2a2a] text-[#bdc1c6]'
+                                }`}
+                            >
+                                {maskEmailsInText(msg.errorDetail)}
+                            </pre>
+                        )}
+                    </div>
+                ) : (
+                    msg.content && (
+                        <div className="pl-0.5">{renderFormattedContent(msg.content, msg.id, isLight)}</div>
+                    )
                 )}
             </div>
         );
@@ -2984,6 +4215,11 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
             if (msg.taskFinished) {
                 flushWork(msg.timestamp);
                 items.push({ kind: 'task_finished', id: msg.id, msg, task: msg.taskFinished });
+                continue;
+            }
+            if (msg.isError) {
+                flushWork(msg.timestamp);
+                items.push({ kind: 'assistant', id: msg.id, msg });
                 continue;
             }
             const hasTools = Boolean(msg.toolCalls && msg.toolCalls.length > 0);
@@ -3038,17 +4274,28 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                 )}
                 {visibleItems.map(item => {
             if (item.kind === 'user') {
+                const isUserHighlighted = highlightedMsgId === item.id;
                 return (
-                    <div key={`${isLight ? 'desk' : 'mob'}_u_${item.id}`} className="flex justify-end">
+                    <div
+                        key={`${isLight ? 'desk' : 'mob'}_u_${item.id}`}
+                        data-conv-msg-id={item.id}
+                        className="flex justify-end"
+                    >
                         <div
-                            className={
+                            className={`${
                                 isLight
                                     ? 'max-w-[82%] rounded-2xl bg-[#f3f3f1] border border-[#dfdfd8] px-4 py-2.5 text-[14.5px] text-[#1f1f1f] leading-relaxed whitespace-pre-wrap break-words'
                                     : 'max-w-[88%] rounded-2xl bg-[#2b2b2b] border border-[#3a3a3a] px-4 py-3 text-[15px] text-[#e3e3e3] leading-relaxed whitespace-pre-wrap break-words'
-                            }
+                            } ${isUserHighlighted ? 'ring-2 ring-amber-400 shadow-lg' : ''}`}
                         >
                             {renderMessageMedia(item.msg, isLight)}
-                            {item.msg.content ? maskEmailsInText(item.msg.content) : null}
+                            {item.msg.content ? (
+                                <HighlightText
+                                    text={maskEmailsInText(item.msg.content)}
+                                    query={inConvSearchQuery}
+                                    markClassName={isLight ? undefined : 'bg-amber-400/35 text-[#fff3cd] rounded px-0.5 font-semibold'}
+                                />
+                            ) : null}
                         </div>
                     </div>
                 );
@@ -3157,20 +4404,197 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
         );
     };
 
+    const renderTurnStatusAndQueuedCards = (isLight: boolean) => {
+        const turnState = activeConversation?.turnState;
+        const queuedPrompts = activeConversation?.queuedPrompts || [];
+        const phase = turnState?.phase || (activeConversation?.isRunning ? 'running' : 'idle');
+        const showRetryBanner = phase === 'retrying' || phase === 'cancelling' || isCancelling;
+        const convMsgs = activeConversation?.messages || [];
+        const errTextNorm = String(activeConversation?.errorMessage || '').trim();
+        const alreadyRenderedInRecentMsgs = convMsgs.slice(-5).some(
+            m =>
+                Boolean(m?.isError) &&
+                (m.errorCode === 'STREAM_RETRY_EXHAUSTED' ||
+                    (errTextNorm && String(m.content || '').trim() === errTextNorm))
+        );
+        const showErrorBanner = Boolean(
+            activeConversation?.hasError &&
+                errTextNorm &&
+                !alreadyRenderedInRecentMsgs &&
+                phase !== 'retrying' &&
+                !activeConversation?.isRunning
+        );
+        if (!showRetryBanner && !showErrorBanner && queuedPrompts.length === 0) {
+            return null;
+        }
+        const retryAttempt = Math.max(1, Number(turnState?.retryAttempt || 1));
+        const maxRetries = Math.max(1, Number(turnState?.maxRetries || 2));
 
-    // Filter conversations when search or unread filter is active
+        return (
+            <div className="space-y-3 mt-3" data-testid="turn-resilience-panel">
+                {showRetryBanner && (
+                    <div
+                        data-testid="turn-state-card"
+                        className={`rounded-2xl border px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2.5 text-xs ${
+                            isLight
+                                ? 'bg-[#fef7e0] border-[#f9ab00]/40 text-[#5f4300]'
+                                : 'bg-[#2a2315] border-[#fbbc04]/35 text-[#fde293]'
+                        }`}
+                    >
+                        <div className="flex items-start gap-2 min-w-0 flex-1">
+                            {isCancelling || phase === 'cancelling' ? (
+                                <Loader2 className="w-4 h-4 animate-spin shrink-0 mt-0.5" />
+                            ) : (
+                                <RefreshCw className="w-4 h-4 animate-spin shrink-0 mt-0.5" />
+                            )}
+                            <div className="min-w-0 flex-1 space-y-0.5">
+                                <div className="font-semibold tabular-nums flex flex-wrap items-center gap-1.5">
+                                    <span>
+                                        {isCancelling || phase === 'cancelling'
+                                            ? 'Đang dừng lượt chạy cũ và xác nhận trạng thái IDLE...'
+                                            : `Đang thử lại phản hồi (lần ${retryAttempt}/${maxRetries})`}
+                                    </span>
+                                    {queuedPrompts.length > 0 && (
+                                        <span
+                                            className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium tabular-nums ${
+                                                isLight
+                                                    ? 'bg-[#e8f0fe] text-[#174ea6]'
+                                                    : 'bg-[#1f324d] text-[#a8c7fa]'
+                                            }`}
+                                        >
+                                            +{queuedPrompts.length} đang chờ
+                                        </span>
+                                    )}
+                                </div>
+                                {turnState?.lastError && (
+                                    <div
+                                        className={`text-xs break-words line-clamp-2 ${
+                                            isLight ? 'text-[#7a5800]' : 'text-[#f6cf65]'
+                                        }`}
+                                    >
+                                        {turnState.lastError}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            onMouseDown={e => e.preventDefault()}
+                            onClick={handleCancelRunning}
+                            disabled={isCancelling}
+                            data-testid="turn-state-stop-btn"
+                            className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-60 ${
+                                isLight
+                                    ? 'bg-[#fce8e6] hover:bg-[#f9d6d2] text-[#c5221f] border border-[#f2b8b5]'
+                                    : 'bg-[#3c2020] hover:bg-[#4e2828] text-[#f6aea9] border border-[#6c3434]'
+                            }`}
+                        >
+                            <Square className="w-3 h-3 fill-current" />
+                            <span>{queuedPrompts.length > 0 ? 'Dừng & chạy prompt chờ' : 'Dừng'}</span>
+                        </button>
+                    </div>
+                )}
+
+                {showErrorBanner && (
+                    <div
+                        data-testid="turn-error-card"
+                        className={`rounded-2xl border px-3.5 py-2.5 flex items-start gap-2 text-xs ${
+                            isLight
+                                ? 'bg-[#fce8e6] border-[#f2b8b5] text-[#a50e0e]'
+                                : 'bg-[#361d1d] border-[#6e3333] text-[#f6aea9]'
+                        }`}
+                    >
+                        <MessageSquareWarning className="w-4 h-4 shrink-0 mt-0.5" />
+                        <div className="min-w-0 flex-1 break-words">{activeConversation?.errorMessage}</div>
+                    </div>
+                )}
+
+                {queuedPrompts.map((qp, idx) => (
+                    <div
+                        key={`queued_${qp.id}`}
+                        data-testid="queued-prompt-card"
+                        className={`rounded-2xl border px-3.5 py-2.5 space-y-1.5 ${
+                            isLight
+                                ? 'bg-[#f4f7fc] border-[#c6dafc] text-[#1f1f1f]'
+                                : 'bg-[#202630] border-[#384963] text-[#e3e3e3]'
+                        }`}
+                    >
+                        <div className="flex items-center justify-between gap-2">
+                            <div
+                                className={`inline-flex items-center gap-1.5 text-xs font-medium tabular-nums ${
+                                    isLight ? 'text-[#174ea6]' : 'text-[#8ab4f8]'
+                                }`}
+                            >
+                                <Clock className="w-3.5 h-3.5 shrink-0" />
+                                <span>Đang chờ lượt cũ kết thúc (#{idx + 1})</span>
+                            </div>
+                            <button
+                                type="button"
+                                onMouseDown={e => e.preventDefault()}
+                                onClick={() => handleCancelQueuedPrompt(qp.id)}
+                                title="Hủy prompt đang chờ"
+                                aria-label="Hủy prompt đang chờ"
+                                data-testid="cancel-queued-prompt-btn"
+                                className={`p-1 rounded-full transition-colors ${
+                                    isLight
+                                        ? 'text-[#5f6368] hover:text-[#c5221f] hover:bg-black/[0.06]'
+                                        : 'text-[#9aa0a6] hover:text-[#f28b82] hover:bg-white/[0.08]'
+                                }`}
+                            >
+                                <X className="w-3.5 h-3.5" />
+                            </button>
+                        </div>
+                        {qp.content && (
+                            <div className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">
+                                {qp.content}
+                            </div>
+                        )}
+                        {qp.media && qp.media.length > 0 && (
+                            <div className="pt-1">
+                                {renderMessageMedia(
+                                    {
+                                        id: qp.id,
+                                        role: 'user',
+                                        content: '',
+                                        timestamp: qp.createdAt || Date.now(),
+                                        media: qp.media
+                                    },
+                                    isLight
+                                )}
+                            </div>
+                        )}
+                    </div>
+                ))}
+            </div>
+        );
+    };
+
+
+    // Filter conversations using Vietnamese diacritics-insensitive + multi-token ranking
+    const searchTokens = useMemo(() => tokenizeVnSearch(searchQuery), [searchQuery]);
     const filterConvList = (list: CompanionConversationItem[]) => {
-        return list.filter(item => {
+        const filtered = list.filter(item => {
             if (filterUnreadOnly && !item.unread && !item.isRunning) return false;
-            if (searchQuery.trim()) {
-                const q = searchQuery.toLowerCase();
-                return (
-                    item.title.toLowerCase().includes(q) ||
-                    item.projectName.toLowerCase().includes(q) ||
-                    (item.workspaceTag || '').toLowerCase().includes(q)
+            if (searchTokens.length > 0) {
+                return matchesAllVnTokens(
+                    `${item.title} ${item.projectName} ${item.workspaceTag || ''} ${item.snippet || ''}`,
+                    searchTokens
                 );
             }
             return true;
+        });
+        if (searchTokens.length === 0) return filtered;
+        return [...filtered].sort((a, b) => {
+            const sa = scoreVnSearchFields(
+                { title: a.title, project: `${a.projectName} ${a.workspaceTag || ''}`, preview: a.snippet },
+                searchTokens
+            );
+            const sb = scoreVnSearchFields(
+                { title: b.title, project: `${b.projectName} ${b.workspaceTag || ''}`, preview: b.snippet },
+                searchTokens
+            );
+            if (sb !== sa) return sb - sa;
+            return (b.lastModifiedEpoch || 0) - (a.lastModifiedEpoch || 0);
         });
     };
 
@@ -3359,13 +4783,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                             key={p.id}
                             type="button"
                             onClick={() => {
-                                if (isChatGPT) {
-                                    setChatgptTargetProjectId(p.id);
-                                    setChatgptTargetProjectName(p.name);
-                                } else {
-                                    setTargetNewProjectId(p.id);
-                                    setTargetNewProjectName(p.name);
-                                }
+                                setEffectiveTargetProject(p.id, p.name);
                                 setPromptText(prev => prev.replace(/@\w*$/, `@${p.name} `));
                                 setMentionMenuOpen(false);
                                 desktopTextareaRef.current?.focus();
@@ -3401,7 +4819,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                         onChange={handlePromptChange}
                         onPaste={handlePasteMedia}
                         onKeyDown={e => {
-                            if (e.key === 'Enter' && !e.shiftKey) {
+                            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
                                 e.preventDefault();
                                 handleSubmitPrompt();
                             }
@@ -3477,7 +4895,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                                     key={m.id}
                                                     type="button"
                                                     onClick={() => {
-                                                        setSelectedModel(m);
+                                                        setEffectiveSelectedModel(m);
                                                         setModelMenuOpen(false);
                                                     }}
                                                     className={`w-full px-3.5 py-2 flex items-center justify-between hover:bg-black/[0.04] text-left transition-colors ${
@@ -3500,7 +4918,17 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                                         )}
                                                     </div>
                                                     <div className="flex items-center gap-2 shrink-0">
-                                                        <span className="text-xs text-[#787878]">{pct}%</span>
+                                                        <span
+                                                            className={`text-xs tabular-nums ${
+                                                                pct <= 0
+                                                                    ? 'text-[#d93025] font-semibold'
+                                                                    : pct <= 15
+                                                                    ? 'text-[#e37400] font-medium'
+                                                                    : 'text-[#787878]'
+                                                            }`}
+                                                        >
+                                                            {pct <= 0 ? 'Hết quota (0%)' : `${pct}%`}
+                                                        </span>
                                                         {isSelected && <Check className="w-3.5 h-3.5 text-[#1967d2]" />}
                                                     </div>
                                                 </button>
@@ -3628,21 +5056,43 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                 <Mic className="w-[15px] h-[15px]" />
                             </button>
 
-                            {isSubmitting ? (
+                            {(isSubmitting ||
+                                isCancelling ||
+                                activeConversation?.isRunning ||
+                                activeConversation?.turnState?.phase === 'retrying' ||
+                                activeConversation?.turnState?.phase === 'cancelling') && (
                                 <button
                                     type="button"
                                     onClick={handleCancelRunning}
-                                    title="Stop"
-                                    className="w-7 h-7 rounded-full bg-[#fce8e6] hover:bg-[#f8d7da] text-[#d93025] flex items-center justify-center transition-all"
+                                    disabled={isCancelling}
+                                    title="Dừng lượt đang chạy"
+                                    data-testid="desktop-stop-btn"
+                                    className="w-7 h-7 rounded-full bg-[#fce8e6] hover:bg-[#f8d7da] text-[#d93025] flex items-center justify-center transition-all disabled:opacity-60"
                                 >
                                     <Square className="w-3 h-3 fill-current" />
                                 </button>
-                            ) : (
+                            )}
+
+                            {(promptText.trim() ||
+                                attachedMedia.length > 0 ||
+                                !(
+                                    isSubmitting ||
+                                    isCancelling ||
+                                    activeConversation?.isRunning ||
+                                    activeConversation?.turnState?.phase === 'retrying' ||
+                                    activeConversation?.turnState?.phase === 'cancelling'
+                                )) && (
                                 <button
                                     type="button"
                                     onClick={handleSubmitPrompt}
-                                    disabled={!promptText.trim() && attachedMedia.length === 0}
-                                    title="Submit"
+                                    disabled={isSubmitting || (!promptText.trim() && attachedMedia.length === 0)}
+                                    title={
+                                        activeConversation?.isRunning ||
+                                        activeConversation?.turnState?.phase === 'retrying'
+                                            ? 'Đưa vào hàng chờ'
+                                            : 'Submit'
+                                    }
+                                    data-testid="desktop-submit-btn"
                                     className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
                                         isChatGPT
                                             ? promptText.trim() || attachedMedia.length > 0
@@ -3798,7 +5248,9 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
         expandedTools,
         expandedWorkGroups,
         copiedCodeId,
-        visibleGroupLimit
+        visibleGroupLimit,
+        inConvSearchQuery,
+        highlightedMsgId
     ]);
 
     const renderedMobileMessages = useMemo(() => {
@@ -3814,7 +5266,9 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
         expandedTools,
         expandedWorkGroups,
         copiedCodeId,
-        visibleGroupLimit
+        visibleGroupLimit,
+        inConvSearchQuery,
+        highlightedMsgId
     ]);
 
     const isMobileFocusedMode =
@@ -3843,6 +5297,179 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
         }, 20);
     };
 
+    const searchActive = searchTokens.length > 0;
+
+    const renderInConvSearchBar = (isLight: boolean) => {
+        if (!inConvSearchOpen && !inConvSearchQuery.trim()) return null;
+        return (
+            <div
+                className={`px-3.5 py-2 border-b flex items-center gap-2 text-xs tabular-nums shrink-0 ${
+                    isLight
+                        ? 'bg-[#fcfcfb] border-[#e6e6e4] text-[#1f1f1f]'
+                        : 'bg-[#171816] border-[#2c2d2a] text-[#e3e3e3]'
+                }`}
+            >
+                <Search className={`w-3.5 h-3.5 shrink-0 ${isLight ? 'text-[#5f6368]' : 'text-[#9e9e9e]'}`} />
+                <input
+                    ref={inConvSearchInputRef}
+                    type="text"
+                    value={inConvSearchQuery}
+                    onChange={e => {
+                        setInConvSearchQuery(e.target.value);
+                        setInConvMatchCursor(0);
+                    }}
+                    onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            stepInConvMatch(e.shiftKey ? -1 : 1);
+                        } else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (inConvSearchQuery) setInConvSearchQuery('');
+                            else setInConvSearchOpen(false);
+                        }
+                    }}
+                    placeholder="Tìm không dấu trong hội thoại này (Ctrl+F)..."
+                    className={`flex-1 min-w-0 bg-transparent text-xs outline-none ${
+                        isLight ? 'placeholder-[#8e8e8e] text-[#1f1f1f]' : 'placeholder-[#8e8e8e] text-[#e3e3e3]'
+                    }`}
+                />
+                {inConvSearchQuery && (
+                    <button
+                        type="button"
+                        onClick={() => setInConvSearchQuery('')}
+                        aria-label="Xóa từ khóa tìm trong hội thoại"
+                        className={isLight ? 'text-[#787878] hover:text-[#1f1f1f]' : 'text-[#9e9e9e] hover:text-white'}
+                    >
+                        <X className="w-3.5 h-3.5" />
+                    </button>
+                )}
+                {inConvTokens.length > 0 && (
+                    <span className={`font-semibold shrink-0 ${isLight ? 'text-[#5f6368]' : 'text-[#9e9e9e]'}`}>
+                        {inConvMatchedMsgIds.length > 0
+                            ? `${(inConvMatchCursor % inConvMatchedMsgIds.length) + 1}/${inConvMatchedMsgIds.length}`
+                            : '0/0'}
+                    </span>
+                )}
+                <button
+                    type="button"
+                    disabled={inConvMatchedMsgIds.length === 0}
+                    onClick={() => stepInConvMatch(-1)}
+                    aria-label="Kết quả trước"
+                    className={`p-1 rounded border disabled:opacity-40 cursor-pointer ${
+                        isLight ? 'border-[#dfdfd8] hover:bg-black/[0.04]' : 'border-[#3a3b38] hover:bg-white/[0.06]'
+                    }`}
+                >
+                    <ChevronUp className="w-3.5 h-3.5" />
+                </button>
+                <button
+                    type="button"
+                    disabled={inConvMatchedMsgIds.length === 0}
+                    onClick={() => stepInConvMatch(1)}
+                    aria-label="Kết quả tiếp theo"
+                    className={`p-1 rounded border disabled:opacity-40 cursor-pointer ${
+                        isLight ? 'border-[#dfdfd8] hover:bg-black/[0.04]' : 'border-[#3a3b38] hover:bg-white/[0.06]'
+                    }`}
+                >
+                    <ChevronDown className="w-3.5 h-3.5" />
+                </button>
+                <button
+                    type="button"
+                    onClick={() => {
+                        setInConvSearchQuery('');
+                        setInConvSearchOpen(false);
+                    }}
+                    aria-label="Đóng tìm trong hội thoại"
+                    className={`p-1 rounded cursor-pointer ${
+                        isLight ? 'text-[#787878] hover:text-[#1f1f1f]' : 'text-[#9e9e9e] hover:text-white'
+                    }`}
+                >
+                    <X className="w-3.5 h-3.5" />
+                </button>
+            </div>
+        );
+    };
+
+    const renderDeepSearchResultsBlock = (isLight: boolean) => {
+        if (!searchActive || searchQuery.trim().length < 2) return null;
+        return (
+            <div className="mb-3 space-y-1.5">
+                <div
+                    className={`px-1.5 flex items-center justify-between gap-2 text-xs font-medium ${
+                        isLight ? 'text-[#5f6368]' : 'text-[#9e9e9e]'
+                    }`}
+                >
+                    <span className="inline-flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                        <span>
+                            {deepSearchLoading
+                                ? 'Đang tìm toàn văn trên PC...'
+                                : deepSearchWarming
+                                  ? `Đang lập chỉ mục sâu · ${deepSearchResults.length} khớp`
+                                  : `Tìm toàn lịch sử & nội dung (${deepSearchTotal})`}
+                        </span>
+                    </span>
+                </div>
+                {deepSearchResults.length > 0 && (
+                    <div className="space-y-1">
+                        {deepSearchResults.slice(0, 20).map(conv => {
+                            const isActive = activeConversationId === conv.id;
+                            return (
+                                <button
+                                    key={`deep_${isLight ? 'd' : 'm'}_${conv.id}`}
+                                    type="button"
+                                    onClick={() => handleOpenConversation(conv)}
+                                    className={`w-full text-left px-2.5 py-2 rounded-[9px] border transition-colors cursor-pointer space-y-1 ${
+                                        isLight
+                                            ? isActive
+                                                ? 'bg-[#e3e3e0] border-[#cfcfc8] text-[#111111]'
+                                                : 'bg-white/80 hover:bg-white border-[#e6e6e4] text-[#1f1f1f]'
+                                            : isActive
+                                              ? 'bg-[#2a2b28] border-[#4a4b47] text-white'
+                                              : 'bg-[#252624]/80 hover:bg-[#2a2b28] border-[#343532] text-[#e3e3e3]'
+                                    }`}
+                                >
+                                    <div className="flex items-start justify-between gap-2">
+                                        <span className="text-xs font-semibold leading-snug line-clamp-2 break-words">
+                                            <HighlightText
+                                                text={maskEmailsInText(conv.title)}
+                                                query={searchQuery}
+                                                markClassName={isLight ? undefined : 'bg-amber-400/35 text-[#fff3cd] rounded px-0.5 font-semibold'}
+                                            />
+                                        </span>
+                                        <span className={`text-xs shrink-0 tabular-nums ${isLight ? 'text-[#787878]' : 'text-[#8e8e8e]'}`}>
+                                            {conv.relativeTime}
+                                        </span>
+                                    </div>
+                                    {conv.snippet && (
+                                        <div className={`text-xs leading-snug line-clamp-2 break-words ${isLight ? 'text-[#5f6368]' : 'text-[#b0b0b0]'}`}>
+                                            <HighlightText
+                                                text={maskEmailsInText(conv.snippet)}
+                                                query={searchQuery}
+                                                markClassName={isLight ? undefined : 'bg-amber-400/35 text-[#fff3cd] rounded px-0.5 font-semibold'}
+                                            />
+                                        </div>
+                                    )}
+                                    <div className={`flex items-center justify-between gap-2 text-xs ${isLight ? 'text-[#787878]' : 'text-[#8e8e8e]'}`}>
+                                        <span className="inline-flex items-center gap-1 truncate">
+                                            <Folder className="w-3 h-3 shrink-0" />
+                                            <span className="truncate">{conv.projectName}</span>
+                                        </span>
+                                        {conv.matchedMsgId && (
+                                            <span className={`${isLight ? 'text-[#1967d2]' : 'text-[#8ab4f8]'} font-semibold shrink-0`}>
+                                                Nhảy tới tin khớp →
+                                            </span>
+                                        )}
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
     return (
         <div
             style={
@@ -3854,10 +5481,10 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                       }
                     : undefined
             }
-            className={`w-full select-none font-sans flex flex-col overflow-hidden ${
+            className={`w-full font-sans flex flex-col overflow-hidden ${
                 isMobileViewport
                     ? 'fixed left-0 right-0 z-[45] bg-[#1e1f1c] rounded-none border-0 shadow-none'
-                    : 'flex-1 min-h-0 h-full md:h-[calc(100dvh-28px)] md:min-h-[420px] bg-[#1e1f1c] md:bg-transparent rounded-none md:rounded-2xl border-0 md:border md:border-[#e3e3e0] shadow-none md:shadow-xs relative'
+                    : 'flex-1 min-h-0 h-full md:h-[calc(100dvh-28px)] lg:h-[calc(100dvh-142px)] md:min-h-[420px] bg-[#1e1f1c] md:bg-transparent rounded-none md:rounded-2xl border-0 md:border md:border-[#e3e3e0] shadow-none md:shadow-xs relative'
             }`}
         >
             {!isSystemOwner ? (
@@ -3901,27 +5528,75 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
             />
 
             {/* TOP PROVIDER SWITCHER BAR (ANTIGRAVITY vs CHATGPT PC) — Hiển thị trên Desktop, ẩn trên Mobile để chuẩn giao diện antigravity.google.com */}
-            <div className="hidden md:flex shrink-0 px-3 py-1.5 bg-[#f1f1ef] border-b border-[#e3e3e0] items-center justify-between gap-2 z-30">
+            <div className="hidden md:flex shrink-0 px-3 py-1.5 bg-[#f1f1ef] border-b border-[#e3e3e0] items-center justify-between gap-2 z-30 select-none">
                 <div className="grid grid-cols-2 md:flex items-center gap-1.5 w-full md:w-auto">
                     <button
                         type="button"
                         onClick={() => handleSwitchProvider('antigravity')}
                         className={`justify-center px-3 py-1.5 md:py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                            !isChatGPT
+                            activeProvider === 'antigravity'
                                 ? 'bg-[#2a2a2a] text-white border border-[#444] md:bg-white md:text-[#111111] shadow-xs md:border-[#d8d8d4]'
                                 : 'text-[#9e9e9e] hover:text-white md:text-[#5f6368] md:hover:text-[#1f1f1f] hover:bg-white/5 md:hover:bg-black/[0.04]'
                         }`}
                     >
                         <AntigravityRibbonLogo className="w-4 h-4 shrink-0" />
-                        <span>ANTIGRAVITY</span>
+                        <span>AG1 · ANTIGRAVITY</span>
                         <span
                             className={`px-1.5 py-0.2 rounded-full text-xs font-semibold tabular-nums ${
-                                !isChatGPT
+                                activeProvider === 'antigravity'
                                     ? 'bg-[#8ab4f8]/20 text-[#8ab4f8] md:bg-[#e8f0fe] md:text-[#1967d2]'
                                     : 'bg-white/10 text-[#9e9e9e] md:bg-black/[0.06] md:text-[#6e6e6e]'
                             }`}
                         >
                             {projects.reduce((acc, p) => acc + (p.totalCount || 0), 0)}
+                        </span>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => handleSwitchProvider('antigravity2')}
+                        className={`justify-center px-3 py-1.5 md:py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                            isAg2
+                                ? 'bg-[#7c3aed] text-white border border-[#7c3aed] md:bg-[#6d28d9] md:border-[#6d28d9] shadow-xs'
+                                : 'text-[#9e9e9e] hover:text-white md:text-[#5f6368] md:hover:text-[#1f1f1f] hover:bg-white/5 md:hover:bg-black/[0.04]'
+                        }`}
+                    >
+                        <AntigravityRibbonLogo className="w-4 h-4 shrink-0" />
+                        <span>AG2 · ANTIGRAVITY 2</span>
+                        <span
+                            className={`px-1.5 py-0.2 rounded-full text-xs font-semibold tabular-nums ${
+                                isAg2
+                                    ? 'bg-white/20 text-white'
+                                    : 'bg-white/10 text-[#9e9e9e] md:bg-black/[0.06] md:text-[#6e6e6e]'
+                            }`}
+                        >
+                            {ag2Projects.reduce((acc, p) => acc + (p.totalCount || 0), 0)}
+                        </span>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => handleSwitchProvider('win1')}
+                        className={`justify-center px-3 py-1.5 md:py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                            isWin1
+                                ? 'bg-[#0891b2] text-white border border-[#0891b2] md:bg-[#0e7490] md:border-[#0e7490] shadow-xs'
+                                : 'text-[#9e9e9e] hover:text-white md:text-[#5f6368] md:hover:text-[#1f1f1f] hover:bg-white/5 md:hover:bg-black/[0.04]'
+                        }`}
+                    >
+                        <img
+                            src="/icons/dopamine-3d/sb_pc_monitor.png"
+                            alt=""
+                            className="w-4 h-4 shrink-0 object-contain"
+                        />
+                        <span>AG3 · {win1HostName}</span>
+                        <span
+                            className={`px-1.5 py-0.2 rounded-full text-xs font-semibold tabular-nums ${
+                                isWin1
+                                    ? 'bg-white/20 text-white'
+                                    : 'bg-white/10 text-[#9e9e9e] md:bg-black/[0.06] md:text-[#6e6e6e]'
+                            }`}
+                        >
+                            {win1Projects.reduce((acc, p) => acc + (p.totalCount || 0), 0)}
                         </span>
                     </button>
 
@@ -3985,9 +5660,23 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                             </>
                         )}
 
-                    <span className="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-[#e6f4ea] text-[#137333]">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#137333]" />
-                        {isChatGPT ? 'Đồng bộ ChatGPT PC (.codex)' : 'Đồng bộ Antigravity PC'}
+                    <span
+                        className={`hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
+                            isWin1 && !win1Online ? 'bg-amber-50 text-amber-800' : 'bg-[#e6f4ea] text-[#137333]'
+                        }`}
+                    >
+                        <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                                isWin1 && !win1Online ? 'bg-amber-500' : 'bg-[#137333]'
+                            }`}
+                        />
+                        {isChatGPT
+                            ? 'Đồng bộ ChatGPT PC (.codex)'
+                            : isAg2
+                            ? 'Đồng bộ Antigravity 2 (acct2)'
+                            : isWin1
+                            ? `Đồng bộ ${win1HostName} (${win1Online ? 'Online' : 'Offline'})`
+                            : 'Đồng bộ Antigravity PC'}
                     </span>
                 </div>
             </div>
@@ -4078,20 +5767,22 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                         {searchBarOpen && (
                             <div className="px-3 pb-2">
                                 <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] bg-white border border-[#dfdfd8]">
-                                    <Search className="w-3.5 h-3.5 text-[#8e8e8e] shrink-0" />
+                                    <Search className={`w-3.5 h-3.5 shrink-0 ${deepSearchLoading ? 'text-indigo-500 animate-pulse' : 'text-[#8e8e8e]'}`} />
                                     <input
+                                        ref={sidebarSearchInputRef}
                                         type="text"
                                         value={searchQuery}
                                         onChange={e => setSearchQuery(e.target.value)}
-                                        placeholder={isChatGPT ? 'Tìm cuộc trò chuyện ChatGPT...' : 'Search conversations...'}
-                                        className="w-full bg-transparent text-[12.5px] text-[#1f1f1f] placeholder-[#8e8e8e] outline-none"
+                                        placeholder={isChatGPT ? 'Tìm không dấu ChatGPT PC (nhấn /)...' : 'Tìm không dấu mọi hội thoại (nhấn /)...'}
+                                        className="w-full bg-transparent text-xs text-[#1f1f1f] placeholder-[#8e8e8e] outline-none"
                                         autoFocus
                                     />
                                     {searchQuery && (
                                         <button
                                             type="button"
                                             onClick={() => setSearchQuery('')}
-                                            className="text-[#8e8e8e] hover:text-[#1f1f1f]"
+                                            aria-label="Xóa tìm kiếm"
+                                            className="text-[#8e8e8e] hover:text-[#1f1f1f] cursor-pointer"
                                         >
                                             <X className="w-3.5 h-3.5" />
                                         </button>
@@ -4133,26 +5824,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
 
                                     <button
                                         type="button"
-                                        onClick={async () => {
-                                            setCustomizationsModalOpen(true);
-                                            if (!customData) {
-                                                for (const base of getCompanionBaseUrls()) {
-                                                    try {
-                                                        const r = await fetch(`${base}/api/ag-companion/customizations`, {
-                                                            headers: { Authorization: `Bearer ${safeAuthToken}` },
-                                                            signal: AbortSignal.timeout(2500)
-                                                        });
-                                                        if (r.ok) {
-                                                            const d = await r.json();
-                                                            if (d && d.ok) {
-                                                                setCustomData(d);
-                                                                break;
-                                                            }
-                                                        }
-                                                    } catch {}
-                                                }
-                                            }
-                                        }}
+                                        onClick={openCustomizationsModal}
                                         className="w-full px-2.5 py-1.5 rounded-[8px] hover:bg-black/[0.04] flex items-center gap-2.5 text-[13px] text-[#3c3c3c] font-normal transition-colors"
                                     >
                                         <Archive className="w-[15px] h-[15px] text-[#5f6368]" />
@@ -4164,47 +5836,53 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
 
                         {/* Scrollable Pinned Conversations & Projects Tree */}
                         <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                            {renderDeepSearchResultsBlock(true)}
+
                             {/* Pinned Conversations (Đã ghim) */}
-                            {effectivePinnedConversations.length > 0 && (
-                                <div>
-                                    <div className="px-1.5 mb-1 text-xs text-[#787878] font-normal">
-                                        {isChatGPT ? 'Đã ghim' : 'Pinned Conversations'}
-                                    </div>
-                                    <div className="space-y-0.5">
-                                        {filterConvList(effectivePinnedConversations).map(conv => {
-                                            const isActive = activeConversationId === conv.id;
-                                            return (
-                                                <div
-                                                    key={`desk_pin_${conv.id}`}
-                                                    onClick={() => handleOpenConversation(conv)}
-                                                    className={`px-2 py-1.5 rounded-[8px] cursor-pointer transition-colors ${
-                                                        isActive
-                                                            ? 'bg-[#e3e3e0] font-medium text-[#111111]'
-                                                            : 'hover:bg-black/[0.04]'
-                                                    }`}
-                                                >
-                                                    <div className="flex items-baseline justify-between gap-2">
-                                                        <span className="text-xs text-[#1f1f1f] leading-snug break-words">
-                                                            {maskEmailsInText(conv.title)}
-                                                        </span>
-                                                        {!isChatGPT && (
-                                                            <span className="text-xs text-[#787878] shrink-0">
-                                                                {conv.relativeTime}
+                            {(() => {
+                                const filteredPinned = filterConvList(effectivePinnedConversations);
+                                if (filteredPinned.length === 0) return null;
+                                return (
+                                    <div>
+                                        <div className="px-1.5 mb-1 text-xs text-[#787878] font-normal">
+                                            {isChatGPT ? 'Đã ghim' : 'Pinned Conversations'}
+                                        </div>
+                                        <div className="space-y-0.5">
+                                            {filteredPinned.map(conv => {
+                                                const isActive = activeConversationId === conv.id;
+                                                return (
+                                                    <div
+                                                        key={`desk_pin_${conv.id}`}
+                                                        onClick={() => handleOpenConversation(conv)}
+                                                        className={`px-2 py-1.5 rounded-[8px] cursor-pointer transition-colors ${
+                                                            isActive
+                                                                ? 'bg-[#e3e3e0] font-medium text-[#111111]'
+                                                                : 'hover:bg-black/[0.04]'
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-baseline justify-between gap-2">
+                                                            <span className="text-xs text-[#1f1f1f] leading-snug break-words">
+                                                                <HighlightText text={maskEmailsInText(conv.title)} query={searchQuery} />
                                                             </span>
+                                                            {!isChatGPT && (
+                                                                <span className="text-xs text-[#787878] shrink-0">
+                                                                    {conv.relativeTime}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        {!isChatGPT && (
+                                                            <div className="mt-0.5 flex items-center gap-1.5 text-xs text-[#787878]">
+                                                                <Folder className="w-3 h-3 text-[#8e8e8e] shrink-0" />
+                                                                <span className="truncate">{conv.projectName}</span>
+                                                            </div>
                                                         )}
                                                     </div>
-                                                    {!isChatGPT && (
-                                                        <div className="mt-0.5 flex items-center gap-1.5 text-xs text-[#787878]">
-                                                            <Folder className="w-3 h-3 text-[#8e8e8e] shrink-0" />
-                                                            <span className="truncate">{conv.projectName}</span>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            );
-                                        })}
+                                                );
+                                            })}
+                                        </div>
                                     </div>
-                                </div>
-                            )}
+                                );
+                            })()}
 
                             {/* Projects (Dự án) */}
                             <div>
@@ -4236,9 +5914,12 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
 
                                 <div className="space-y-3">
                                     {effectiveProjects.map(proj => {
-                                        const isCollapsed = !!collapsedProjects[proj.id];
-                                        const isExpandedAll = !!expandedSeeAllProjects[proj.id];
+                                        const isCollapsed = searchActive ? false : !!collapsedProjects[proj.id];
+                                        const isExpandedAll = searchActive || !!expandedSeeAllProjects[proj.id];
                                         const filteredConvs = filterConvList(proj.conversations);
+                                        if ((searchActive || filterUnreadOnly) && filteredConvs.length === 0) {
+                                            return null;
+                                        }
                                         const defaultLimit = isChatGPT
                                             ? 5
                                             : proj.name === 'AG' || proj.id.startsWith('ag-pc-')
@@ -4301,21 +5982,39 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                                                         }`}
                                                                     >
                                                                         <span className="text-xs leading-snug break-words">
-                                                                            {maskEmailsInText(
-                                                                                !isChatGPT &&
-                                                                                    conv.provider !== 'chatgpt' &&
-                                                                                    conv.workspaceTag
-                                                                                    ? `Claude giao · ${conv.workspaceTag} · ${conv.title}`
-                                                                                    : conv.title
-                                                                            )}
+                                                                            <HighlightText
+                                                                                text={maskEmailsInText(
+                                                                                    !isChatGPT &&
+                                                                                        conv.provider !== 'chatgpt' &&
+                                                                                        conv.workspaceTag
+                                                                                        ? `Claude giao · ${conv.workspaceTag} · ${conv.title}`
+                                                                                        : conv.title
+                                                                                )}
+                                                                                query={searchQuery}
+                                                                            />
                                                                         </span>
 
-                                                                        <div className="shrink-0 flex items-center justify-end min-w-[24px]">
+                                                                        <div className="shrink-0 flex items-center justify-end gap-1 min-w-[24px]">
+                                                                            {(conv.queuedCount || 0) > 0 && (
+                                                                                <span
+                                                                                    title={`${conv.queuedCount} prompt đang chờ`}
+                                                                                    className="px-1.5 py-0.5 rounded-full text-xs font-medium tabular-nums bg-[#e8f0fe] text-[#174ea6]"
+                                                                                >
+                                                                                    +{conv.queuedCount} chờ
+                                                                                </span>
+                                                                            )}
                                                                             {conv.hasError ? (
                                                                                 <AlertCircleRedIcon
                                                                                     className="w-[15px] h-[15px]"
                                                                                     title={conv.errorMessage || 'Bạn đã hết lượt sử dụng Codex và Công việc'}
                                                                                 />
+                                                                            ) : conv.turnState?.phase === 'retrying' ? (
+                                                                                <span
+                                                                                    title={conv.turnState.lastError || 'Đang thử lại phản hồi'}
+                                                                                    className="px-1.5 py-0.5 rounded-full text-xs font-medium tabular-nums bg-[#fef7e0] text-[#9a6700]"
+                                                                                >
+                                                                                    Thử lại {conv.turnState.retryAttempt || 1}/{conv.turnState.maxRetries || 2}
+                                                                                </span>
                                                                             ) : conv.isRunning && !isActive ? (
                                                                                 <PcRunningArcSpinner className="w-[14px] h-[14px] text-[#5f6368]" />
                                                                             ) : conv.unread && !isActive ? (
@@ -4334,7 +6033,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                                             })
                                                         )}
 
-                                                        {proj.totalCount > defaultLimit && (
+                                                        {proj.totalCount > defaultLimit && !searchActive && (
                                                             <button
                                                                 type="button"
                                                                 onClick={() =>
@@ -4359,6 +6058,43 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                             </div>
                                         );
                                     })}
+                                    {searchActive &&
+                                        !deepSearchLoading &&
+                                        deepSearchResults.length === 0 &&
+                                        filterConvList(effectivePinnedConversations).length === 0 &&
+                                        effectiveProjects.every(p => filterConvList(p.conversations).length === 0) && (
+                                            <div className="py-6 px-2 text-center space-y-2 text-xs text-[#787878]">
+                                                <div>Không tìm thấy hội thoại khớp &ldquo;{searchQuery}&rdquo;.</div>
+                                                <div className="flex flex-wrap justify-center gap-1.5">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setSearchQuery('')}
+                                                        className="px-2.5 py-1 rounded-md bg-white border border-[#dfdfd8] text-[#1f1f1f] font-medium cursor-pointer"
+                                                    >
+                                                        Xóa từ khóa
+                                                    </button>
+                                                    {(
+                                                        [
+                                                            { id: 'antigravity', label: 'Antigravity' },
+                                                            { id: 'antigravity2', label: 'Antigravity 2' },
+                                                            { id: 'win1', label: win1HostName },
+                                                            { id: 'chatgpt', label: 'ChatGPT PC' },
+                                                        ] as const
+                                                    )
+                                                        .filter(p => p.id !== activeProvider)
+                                                        .map(p => (
+                                                            <button
+                                                                key={`desk_sw_${p.id}`}
+                                                                type="button"
+                                                                onClick={() => handleSwitchProvider(p.id)}
+                                                                className="px-2.5 py-1 rounded-md bg-[#eef4ff] text-[#1967d2] font-medium cursor-pointer"
+                                                            >
+                                                                Tìm bên {p.label}
+                                                            </button>
+                                                        ))}
+                                                </div>
+                                            </div>
+                                        )}
                                 </div>
                             </div>
                         </div>
@@ -4373,11 +6109,17 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                 <div className="flex items-center gap-2 min-w-0">
                                     <span
                                         className={`w-2 h-2 rounded-full shrink-0 ${
-                                            wsLiveConnected ? 'bg-[#2e7d32]' : 'bg-[#fbbc04]'
+                                            isWin1
+                                                ? win1Online
+                                                    ? 'bg-[#2e7d32]'
+                                                    : 'bg-[#fbbc04]'
+                                                : wsLiveConnected
+                                                ? 'bg-[#2e7d32]'
+                                                : 'bg-[#fbbc04]'
                                         }`}
                                     />
                                     <span className="text-[12.5px] font-medium text-[#1f1f1f] truncate">
-                                        {isChatGPT ? 'ChatGPT PC (.codex)' : hostName}
+                                        {isChatGPT ? 'ChatGPT PC (.codex)' : isAg2 ? ag2HostName : isWin1 ? win1HostName : hostName}
                                     </span>
                                 </div>
                                 <ChevronDown className="w-3.5 h-3.5 text-[#6e6e6e] shrink-0" />
@@ -4500,13 +6242,25 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                                 handleTogglePin(activeConversation.id, activeConversation.pinned)
                                             }
                                             title={activeConversation.pinned ? 'Unpin' : 'Pin conversation'}
-                                            className={`p-1 rounded-md transition-colors ${
+                                            className={`p-1 rounded-md shrink-0 transition-colors ${
                                                 activeConversation.pinned
                                                     ? 'text-[#1967d2] bg-[#eef4ff]'
                                                     : 'text-[#787878] hover:text-[#1f1f1f] hover:bg-black/[0.04]'
                                             }`}
                                         >
                                             <Pin className="w-3.5 h-3.5" />
+                                        </button>
+                                    )}
+                                    {isSystemOwner && isChatGPT && activeConversation && (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleOpenChatGptPc(activeConversation.id)}
+                                            disabled={openingChatGptPc}
+                                            title="Mở phiên này trong ứng dụng ChatGPT PC"
+                                            className="px-2 py-1 rounded-md text-xs font-medium text-[#1f1f1f] bg-white border border-[#e2e2e0] hover:bg-[#fcfcfb] disabled:opacity-60 flex items-center gap-1 shrink-0 transition-colors"
+                                        >
+                                            <ExternalLink className="w-3.5 h-3.5 text-[#1967d2]" />
+                                            <span>{openingChatGptPc ? 'Đang mở...' : 'Mở ChatGPT PC'}</span>
                                         </button>
                                     )}
                                 </div>
@@ -4541,8 +6295,26 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                             </div>
                         )}
 
-                        {/* Top-Right Icons: Feedback (!) + User Avatar ('vu') with Google 4-color ring */}
+                        {/* Top-Right Icons: Search in Conversation + Feedback (!) + User Avatar ('vu') */}
                         <div className="flex items-center gap-2.5 ml-auto shrink-0">
+                            {activeConversationId && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setInConvSearchOpen(v => !v);
+                                        window.setTimeout(() => inConvSearchInputRef.current?.focus(), 40);
+                                    }}
+                                    title="Tìm tin nhắn trong hội thoại (Ctrl+F)"
+                                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border text-xs font-medium transition-colors cursor-pointer ${
+                                        inConvSearchOpen || inConvSearchQuery.trim()
+                                            ? 'bg-[#eef4ff] border-[#b7d0fb] text-[#1967d2]'
+                                            : 'bg-white border-[#e2e2e0] text-[#5f6368] hover:text-[#1f1f1f]'
+                                    }`}
+                                >
+                                    <Search className="w-3.5 h-3.5" />
+                                    <span className="hidden lg:inline">Tìm</span>
+                                </button>
+                            )}
                             <button
                                 type="button"
                                 onClick={() => {
@@ -4558,16 +6330,56 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                 <MessageSquareWarning className="w-[17px] h-[17px]" />
                             </button>
 
-                            <button
-                                type="button"
-                                onClick={() => setSettingsModalOpen(true)}
-                                title={`Account: ${member.username}`}
-                                className="p-[2px] rounded-full bg-gradient-to-tr from-[#4285F4] via-[#34A853] to-[#FBBC05] shrink-0 active:scale-95 transition-transform"
-                            >
-                                <div className="w-7 h-7 rounded-full bg-[#004d40] text-white text-[12px] font-semibold flex items-center justify-center tracking-tight">
-                                    {avatarInitials}
-                                </div>
-                            </button>
+                            <div className="inline-flex items-center rounded-full bg-white border border-[#e2e2e0] shadow-2xs shrink-0 overflow-hidden">
+                                <button
+                                    type="button"
+                                    onClick={() => setSettingsModalOpen(true)}
+                                    title={headerAccountTooltip}
+                                    className="inline-flex items-center gap-2 pl-1 pr-2 py-0.5 hover:bg-[#f3f3f2] active:scale-[0.99] transition-all cursor-pointer"
+                                >
+                                    <span className="p-[2px] rounded-full bg-gradient-to-tr from-[#4285F4] via-[#34A853] to-[#FBBC05] shrink-0">
+                                        <span
+                                            className={`w-6 h-6 rounded-full ${
+                                                resolvedHeaderAccount?.avatarBgClass || 'bg-[#004d40]'
+                                            } text-white text-xs font-semibold flex items-center justify-center tracking-tight`}
+                                        >
+                                            {resolvedHeaderAccount ? resolvedHeaderAccount.initials : avatarInitials}
+                                        </span>
+                                    </span>
+                                    <span className="inline-flex items-center gap-1.5 min-w-0 max-w-[260px] lg:max-w-[340px] xl:max-w-[440px]">
+                                        <span className="text-xs font-semibold text-[#1f1f1f] shrink-0">
+                                            {resolvedHeaderAccount ? resolvedHeaderAccount.displayName : `@${member.username}`}
+                                        </span>
+                                        {resolvedHeaderAccount?.showSeparateEmail && (
+                                            <span className="text-xs font-normal text-[#5f6368] truncate">
+                                                · {resolvedHeaderAccount.formattedEmail}
+                                            </span>
+                                        )}
+                                    </span>
+                                    <span
+                                        className={`px-1.5 py-0.5 rounded-md shrink-0 ${
+                                            resolvedHeaderAccount?.badgeClass || 'bg-[#eef4ff] text-[#1967d2]'
+                                        } text-xs font-semibold leading-none`}
+                                    >
+                                        {resolvedHeaderAccount ? resolvedHeaderAccount.tierBadge : roleDisplayLabel}
+                                    </span>
+                                </button>
+                                {isSystemOwner && resolvedHeaderAccount?.email && (
+                                    <button
+                                        type="button"
+                                        onClick={toggleAccountEmailMask}
+                                        title={showAccountEmails ? 'Che email khi livestream' : 'Hiện đầy đủ email'}
+                                        aria-label={showAccountEmails ? 'Che email khi livestream' : 'Hiện đầy đủ email'}
+                                        className="pl-1 pr-2 py-1 text-[#5f6368] hover:text-[#1f1f1f] hover:bg-[#f3f3f2] border-l border-[#ececea] transition-colors cursor-pointer"
+                                    >
+                                        {showAccountEmails ? (
+                                            <EyeOff className="w-3.5 h-3.5" />
+                                        ) : (
+                                            <Eye className="w-3.5 h-3.5" />
+                                        )}
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     </div>
 
@@ -4599,15 +6411,18 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                                 />
                                                 <div className="absolute left-0 top-full mt-1 w-64 rounded-xl bg-white border border-[#dfdfd8] shadow-xl py-1.5 z-40 max-h-64 overflow-y-auto">
                                                     <div className="px-3 py-1 text-xs font-medium text-[#787878]">
-                                                        Select Workspace Project
+                                                        {isAg2
+                                                            ? 'Select Antigravity 2 Project'
+                                                            : isWin1
+                                                            ? `Select ${win1HostName} Project`
+                                                            : 'Select Workspace Project'}
                                                     </div>
                                                     {effectiveProjects.map(p => (
                                                         <button
                                                             key={p.id}
                                                             type="button"
                                                             onClick={() => {
-                                                                setTargetNewProjectId(p.id);
-                                                                setTargetNewProjectName(p.name);
+                                                                setEffectiveTargetProject(p.id, p.name);
                                                                 setDesktopProjectMenuOpen(false);
                                                             }}
                                                             className="w-full px-3 py-2 flex items-center justify-between hover:bg-black/[0.04] text-left"
@@ -4784,19 +6599,25 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                         </div>
                     ) : (
                         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-                            <div ref={desktopScrollContainerRef} className="flex-1 overflow-y-auto px-6 py-4">
+                            {renderInConvSearchBar(true)}
+                            <div ref={desktopScrollContainerRef} className="flex-1 overflow-y-auto px-6 py-4 select-text">
                                 <div className="max-w-[740px] mx-auto space-y-5 pb-6">
                                     {isLoadingConversation && !activeConversation ? (
                                         <div className="py-20 flex flex-col items-center justify-center gap-2.5 text-[#787878]">
                                             <Loader2 className="w-6 h-6 animate-spin text-[#1967d2]" />
                                             <span className="text-[13.5px]">Loading conversation trajectory...</span>
                                         </div>
-                                    ) : activeConversation?.messages && activeConversation.messages.length > 0 ? (
-                                        renderedDesktopMessages
                                     ) : (
-                                        <div className="py-12 text-center text-[13.5px] text-[#787878]">
-                                            No steps recorded yet. Enter a message below to continue.
-                                        </div>
+                                        <>
+                                            {activeConversation?.messages && activeConversation.messages.length > 0 ? (
+                                                renderedDesktopMessages
+                                            ) : !(activeConversation?.queuedPrompts?.length || activeConversation?.turnState?.phase === 'retrying' || activeConversation?.hasError) ? (
+                                                <div className="py-12 text-center text-[13.5px] text-[#787878]">
+                                                    No steps recorded yet. Enter a message below to continue.
+                                                </div>
+                                            ) : null}
+                                            {renderTurnStatusAndQueuedCards(true)}
+                                        </>
                                     )}
                                     <div ref={desktopMessagesEndRef} />
                                 </div>
@@ -4840,7 +6661,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                 )}
                             </button>
 
-                            <div className="relative min-w-0 flex-1 max-w-[188px]">
+                            <div className="relative min-w-0 flex-1 max-w-[146px] sm:max-w-[188px]">
                                 <button
                                     type="button"
                                     onClick={() => setHostMenuOpen(prev => !prev)}
@@ -4849,11 +6670,17 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                     <span className="flex items-center gap-2 min-w-0">
                                         <span
                                             className={`w-2 h-2 rounded-full shrink-0 ${
-                                                wsLiveConnected ? 'bg-[#689f38]' : 'bg-[#fbbc04]'
+                                                isWin1
+                                                    ? win1Online
+                                                        ? 'bg-[#689f38]'
+                                                        : 'bg-[#fbbc04]'
+                                                    : wsLiveConnected
+                                                    ? 'bg-[#689f38]'
+                                                    : 'bg-[#fbbc04]'
                                             }`}
                                         />
                                         <span className="text-[13.5px] text-[#e3e3e3] truncate font-normal tracking-tight">
-                                            {isChatGPT ? 'ChatGPT PC (.codex)' : hostName}
+                                            {isChatGPT ? 'ChatGPT PC (.codex)' : isAg2 ? ag2HostName : isWin1 ? win1HostName : hostName}
                                         </span>
                                     </span>
                                     <ChevronDown className="w-3.5 h-3.5 text-[#9e9e9e] shrink-0" />
@@ -4901,6 +6728,21 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                         </div>
 
                         <div className="flex items-center gap-1 shrink-0">
+                            {onOpenVirtualOffice && (
+                                <button
+                                    type="button"
+                                    onClick={onOpenVirtualOffice}
+                                    title="Chuyển nhanh sang 5. Văn phòng ảo 3D"
+                                    className="px-2 py-1 rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 text-xs font-bold inline-flex items-center gap-1 transition-colors shrink-0"
+                                >
+                                    <img
+                                        src="/icons/dopamine-3d/menu_3_1_office3d.png"
+                                        alt=""
+                                        className="w-3.5 h-3.5 object-contain shrink-0"
+                                    />
+                                    <span>3D</span>
+                                </button>
+                            )}
                             <button
                                 type="button"
                                 onClick={() => setSearchBarOpen(prev => !prev)}
@@ -4917,7 +6759,13 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                             <button
                                 type="button"
                                 onClick={() => setSettingsModalOpen(true)}
-                                title={isChatGPT ? 'Cài đặt ChatGPT PC' : 'Cài đặt Antigravity'}
+                                title={
+                                    isChatGPT
+                                        ? 'Cài đặt ChatGPT PC'
+                                        : isWin1
+                                        ? `Cài đặt ${win1HostName}`
+                                        : 'Cài đặt Antigravity'
+                                }
                                 className="p-1.5 rounded-full text-[#9e9e9e] hover:text-[#e3e3e3] hover:bg-white/5 transition-colors"
                             >
                                 <Settings className="w-[18px] h-[18px]" />
@@ -4955,10 +6803,10 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                 type="button"
                                 onClick={() => setSettingsModalOpen(true)}
                                 className="ml-0.5 p-[2px] rounded-full bg-gradient-to-tr from-[#4285F4] via-[#34A853] to-[#FBBC05] shrink-0 active:scale-95 transition-transform"
-                                title={`Tài khoản: ${member.username}`}
+                                title={headerAccountTooltip}
                             >
-                                <div className="w-7 h-7 rounded-full bg-[#689f38] text-white text-[13px] font-medium flex items-center justify-center tracking-tight">
-                                    {(member.username || 'd').slice(0, 1).toLowerCase()}
+                                <div className={`w-7 h-7 rounded-full ${resolvedHeaderAccount?.avatarBgClass || 'bg-[#689f38]'} text-white text-xs font-semibold flex items-center justify-center tracking-tight`}>
+                                    {resolvedHeaderAccount ? resolvedHeaderAccount.initials : (member.username || 'd').slice(0, 1).toLowerCase()}
                                 </div>
                             </button>
                         </div>
@@ -4987,6 +6835,34 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                         </div>
 
                         <div className="flex items-center gap-1 shrink-0">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setInConvSearchOpen(v => !v);
+                                    window.setTimeout(() => inConvSearchInputRef.current?.focus(), 40);
+                                }}
+                                title="Tìm tin nhắn trong hội thoại"
+                                className={`p-1.5 rounded-full transition-colors ${
+                                    inConvSearchOpen || inConvSearchQuery.trim()
+                                        ? 'text-[#8ab4f8] bg-[#8ab4f8]/15'
+                                        : 'text-[#9e9e9e] hover:text-white hover:bg-white/5'
+                                }`}
+                            >
+                                <Search className="w-[18px] h-[18px]" />
+                            </button>
+                            {isSystemOwner && isChatGPT && activeConversation && (
+                                <button
+                                    type="button"
+                                    onClick={() => handleOpenChatGptPc(activeConversation.id)}
+                                    disabled={openingChatGptPc}
+                                    title="Mở phiên này trong ứng dụng ChatGPT PC"
+                                    aria-label="Mở ChatGPT PC"
+                                    className="px-2 py-1 rounded-full text-xs font-medium text-[#8ab4f8] bg-[#8ab4f8]/15 hover:bg-[#8ab4f8]/25 disabled:opacity-60 flex items-center gap-1 shrink-0 transition-colors"
+                                >
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                    <span>PC</span>
+                                </button>
+                            )}
                             {activeConversation && (
                                 <button
                                     type="button"
@@ -5047,10 +6923,10 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                 type="button"
                                 onClick={() => setSettingsModalOpen(true)}
                                 className="ml-0.5 p-[2px] rounded-full bg-gradient-to-tr from-[#4285F4] via-[#34A853] to-[#FBBC05] shrink-0 active:scale-95 transition-transform"
-                                title={`Tài khoản: ${member.username}`}
+                                title={headerAccountTooltip}
                             >
-                                <div className="w-7 h-7 rounded-full bg-[#689f38] text-white text-[13px] font-medium flex items-center justify-center tracking-tight">
-                                    {(member.username || 'd').slice(0, 1).toLowerCase()}
+                                <div className={`w-7 h-7 rounded-full ${resolvedHeaderAccount?.avatarBgClass || 'bg-[#689f38]'} text-white text-xs font-semibold flex items-center justify-center tracking-tight`}>
+                                    {resolvedHeaderAccount ? resolvedHeaderAccount.initials : (member.username || 'd').slice(0, 1).toLowerCase()}
                                 </div>
                             </button>
                         </div>
@@ -5060,18 +6936,20 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                 {searchBarOpen && !activeConversationId && (
                     <div className="px-3.5 py-2 bg-[#1e1f1c] border-b border-[#2c2d2a] shrink-0">
                         <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#252624] border border-[#3a3b38]">
-                            <Search className="w-4 h-4 text-[#8e8e8e] shrink-0" />
+                            <Search className={`w-4 h-4 shrink-0 ${deepSearchLoading ? 'text-[#8ab4f8] animate-pulse' : 'text-[#8e8e8e]'}`} />
                             <input
+                                ref={sidebarSearchInputRef}
                                 type="text"
                                 value={searchQuery}
                                 onChange={e => setSearchQuery(e.target.value)}
-                                placeholder={isChatGPT ? 'Tìm cuộc trò chuyện ChatGPT...' : 'Search conversations...'}
+                                placeholder={isChatGPT ? 'Tìm không dấu ChatGPT PC...' : 'Tìm không dấu mọi hội thoại...'}
                                 className="w-full bg-transparent text-[16px] text-[#e3e3e3] placeholder-[#8e8e8e] outline-none"
                             />
                             {searchQuery && (
                                 <button
                                     type="button"
                                     onClick={() => setSearchQuery('')}
+                                    aria-label="Xóa tìm kiếm"
                                     className="text-[#8e8e8e] hover:text-white p-0.5"
                                 >
                                     <X className="w-4 h-4" />
@@ -5085,29 +6963,10 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                 {!activeConversationId ? (
                     <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-3 pb-4 space-y-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                         {/* Customizations Row (matching antigravity.google.com) + Provider Switcher Pill */}
-                        <div className="flex items-center justify-between gap-2 pt-0.5">
+                        <div className="flex items-center justify-between gap-2 flex-wrap pt-0.5">
                             <button
                                 type="button"
-                                onClick={async () => {
-                                    setCustomizationsModalOpen(true);
-                                    if (!customData) {
-                                        for (const base of getCompanionBaseUrls()) {
-                                            try {
-                                                const r = await fetch(`${base}/api/ag-companion/customizations`, {
-                                                    headers: { Authorization: `Bearer ${safeAuthToken}` },
-                                                    signal: AbortSignal.timeout(2500)
-                                                });
-                                                if (r.ok) {
-                                                    const d = await r.json();
-                                                    if (d && d.ok) {
-                                                        setCustomData(d);
-                                                        break;
-                                                    }
-                                                }
-                                            } catch {}
-                                        }
-                                    }
-                                }}
+                                onClick={openCustomizationsModal}
                                 className="flex items-center gap-2.5 py-1.5 text-[15.5px] text-[#b8b8b8] hover:text-[#e3e3e3] transition-colors"
                             >
                                 <Archive className="w-[18px] h-[18px] text-[#9e9e9e] shrink-0" />
@@ -5120,11 +6979,35 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                         type="button"
                                         onClick={() => handleSwitchProvider('antigravity')}
                                         className={`px-2 py-0.5 rounded-md text-xs font-medium flex items-center gap-1 transition-colors ${
-                                            !isChatGPT ? 'bg-[#363734] text-[#e3e3e3]' : 'text-[#8e8e8e]'
+                                            activeProvider === 'antigravity' ? 'bg-[#363734] text-[#e3e3e3]' : 'text-[#8e8e8e]'
                                         }`}
                                     >
                                         <AntigravityRibbonLogo className="w-3 h-3" />
                                         <span>Antigravity</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleSwitchProvider('antigravity2')}
+                                        className={`px-2 py-0.5 rounded-md text-xs font-medium flex items-center gap-1 transition-colors ${
+                                            isAg2 ? 'bg-[#7c3aed] text-white' : 'text-[#8e8e8e]'
+                                        }`}
+                                    >
+                                        <AntigravityRibbonLogo className="w-3 h-3" />
+                                        <span>AG 2</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleSwitchProvider('win1')}
+                                        className={`px-2 py-0.5 rounded-md text-xs font-medium flex items-center gap-1 transition-colors ${
+                                            isWin1 ? 'bg-[#0891b2] text-white' : 'text-[#8e8e8e]'
+                                        }`}
+                                    >
+                                        <img
+                                            src="/icons/dopamine-3d/sb_pc_monitor.png"
+                                            alt=""
+                                            className="w-3 h-3 object-contain"
+                                        />
+                                        <span>WIN1</span>
                                     </button>
                                     <button
                                         type="button"
@@ -5139,6 +7022,64 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                 </div>
                             </div>
                         </div>
+
+                        {/* Active Login Identity Strip (Active PC AI Account + Portal Account) */}
+                        <button
+                            type="button"
+                            onClick={() => setSettingsModalOpen(true)}
+                            className="w-full px-3 py-2 rounded-xl bg-[#20211f] hover:bg-[#262724] border border-[#323330] flex items-center justify-between gap-2 text-left transition-colors"
+                        >
+                            <div className="flex items-center gap-2 min-w-0">
+                                <span
+                                    className={`w-6 h-6 rounded-full ${
+                                        resolvedHeaderAccount?.avatarBgClass || 'bg-[#004d40]'
+                                    } border border-[#57ab5a]/60 text-white text-xs font-semibold flex items-center justify-center shrink-0`}
+                                >
+                                    {resolvedHeaderAccount
+                                        ? resolvedHeaderAccount.initials
+                                        : (member.username || 'v').slice(0, 1).toLowerCase()}
+                                </span>
+                                <div className="min-w-0">
+                                    <div className="text-xs font-medium text-[#e3e3e3] truncate">
+                                        {resolvedHeaderAccount ? (
+                                            <>
+                                                {resolvedHeaderAccount.displayName}{' '}
+                                                <span className="text-[#a5b4fc] font-semibold">
+                                                    ({resolvedHeaderAccount.tierBadge})
+                                                </span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                @{member.username}{' '}
+                                                <span className="text-[#8e8e8e] font-normal">
+                                                    ({roleDisplayLabel})
+                                                </span>
+                                            </>
+                                        )}
+                                    </div>
+                                    <div className="text-xs text-[#9e9e9e] truncate">
+                                        {resolvedHeaderAccount ? (
+                                            <>
+                                                {resolvedHeaderAccount.email
+                                                    ? `${formatLoginEmail(resolvedHeaderAccount.email)} · `
+                                                    : ''}
+                                                Portal: @{member.username} ({roleDisplayLabel})
+                                            </>
+                                        ) : isChatGPT ? (
+                                            'ChatGPT PC · Bấm xem tài khoản'
+                                        ) : isAg2 ? (
+                                            'Antigravity 2 (acct2) · Bấm xem tài khoản'
+                                        ) : isWin1 ? (
+                                            `${win1HostName} (@win1) · Bấm xem tài khoản`
+                                        ) : (
+                                            'Antigravity · Bấm xem tài khoản'
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                            <ChevronRight className="w-4 h-4 text-[#8e8e8e] shrink-0" />
+                        </button>
+
                         {!isSystemOwner && (
                             <div className="p-3.5 rounded-2xl bg-[#1a2e26] border border-emerald-500/40 text-[#e3e3e3] space-y-2">
                                 <div className="flex items-center justify-between gap-2">
@@ -5293,7 +7234,12 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                             </div>
                         )}
 
-                        {effectivePinnedConversations.length > 0 && (
+                        {renderDeepSearchResultsBlock(false)}
+
+                        {(() => {
+                            const filteredMobPinned = filterConvList(effectivePinnedConversations);
+                            if (filteredMobPinned.length === 0) return null;
+                            return (
                             <section>
                                 <button
                                     type="button"
@@ -5303,14 +7249,14 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                     <span>{isChatGPT ? 'Đã ghim' : 'Pinned Conversations'}</span>
                                     <ChevronDown
                                         className={`w-3.5 h-3.5 transition-transform ${
-                                            pinnedSectionOpen ? '' : '-rotate-90'
+                                            pinnedSectionOpen || searchActive ? '' : '-rotate-90'
                                         }`}
                                     />
                                 </button>
 
-                                {pinnedSectionOpen && (
+                                {(pinnedSectionOpen || searchActive) && (
                                     <div className="mt-1 space-y-1">
-                                        {filterConvList(effectivePinnedConversations).map(conv => (
+                                        {filteredMobPinned.map(conv => (
                                             <div
                                                 key={`mob_pin_${conv.id}`}
                                                 onClick={() => handleOpenConversation(conv)}
@@ -5318,7 +7264,11 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                             >
                                                 <div className="flex items-baseline justify-between gap-3">
                                                     <span className="text-[15.5px] text-[#e3e3e3] font-normal truncate">
-                                                        {maskEmailsInText(conv.title)}
+                                                        <HighlightText
+                                                            text={maskEmailsInText(conv.title)}
+                                                            query={searchQuery}
+                                                            markClassName="bg-amber-400/35 text-[#fff3cd] rounded px-0.5 font-semibold"
+                                                        />
                                                     </span>
                                                     <span className="text-[13px] text-[#8e8e8e] shrink-0">
                                                         {conv.relativeTime}
@@ -5333,7 +7283,8 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                     </div>
                                 )}
                             </section>
-                        )}
+                            );
+                        })()}
 
                         <section>
                             <div className="flex items-center justify-between py-1.5">
@@ -5376,14 +7327,18 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                         <div className="py-12 flex flex-col items-center justify-center gap-2 text-[#8e8e8e]">
                                             <Loader2 className="w-6 h-6 animate-spin text-[#8ab4f8]" />
                                             <span className="text-[13.5px]">
-                                                Đang đồng bộ dự án từ {isChatGPT ? 'ChatGPT PC (.codex)' : hostName}...
+                                                Đang đồng bộ dự án từ{' '}
+                                                {isChatGPT ? 'ChatGPT PC (.codex)' : isAg2 ? ag2HostName : isWin1 ? win1HostName : hostName}...
                                             </span>
                                         </div>
                                     ) : (
                                         effectiveProjects.map(proj => {
-                                            const isCollapsed = !!collapsedProjects[proj.id];
-                                            const isExpandedAll = !!expandedSeeAllProjects[proj.id];
+                                            const isCollapsed = searchActive ? false : !!collapsedProjects[proj.id];
+                                            const isExpandedAll = searchActive || !!expandedSeeAllProjects[proj.id];
                                             const filteredConvs = filterConvList(proj.conversations);
+                                            if ((searchActive || filterUnreadOnly) && filteredConvs.length === 0) {
+                                                return null;
+                                            }
                                             const defaultLimit = isChatGPT
                                                 ? 5
                                                 : proj.name === 'AG' || proj.id.startsWith('ag-pc-')
@@ -5439,21 +7394,40 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                                                                     : 'text-[#e3e3e3]'
                                                                             }`}
                                                                         >
-                                                                            {maskEmailsInText(
-                                                                                !isChatGPT &&
-                                                                                    conv.provider !== 'chatgpt' &&
-                                                                                    conv.workspaceTag
-                                                                                    ? `Claude giao · ${conv.workspaceTag} · ${conv.title}`
-                                                                                    : conv.title
-                                                                            )}
+                                                                            <HighlightText
+                                                                                text={maskEmailsInText(
+                                                                                    !isChatGPT &&
+                                                                                        conv.provider !== 'chatgpt' &&
+                                                                                        conv.workspaceTag
+                                                                                        ? `Claude giao · ${conv.workspaceTag} · ${conv.title}`
+                                                                                        : conv.title
+                                                                                )}
+                                                                                query={searchQuery}
+                                                                                markClassName="bg-amber-400/35 text-[#fff3cd] rounded px-0.5 font-semibold"
+                                                                            />
                                                                         </span>
 
-                                                                        <div className="shrink-0 flex items-center justify-end min-w-[28px]">
+                                                                        <div className="shrink-0 flex items-center justify-end gap-1.5 min-w-[28px]">
+                                                                            {(conv.queuedCount || 0) > 0 && (
+                                                                                <span
+                                                                                    title={`${conv.queuedCount} prompt đang chờ`}
+                                                                                    className="px-1.5 py-0.5 rounded-full text-xs font-medium tabular-nums bg-[#1f324d] text-[#a8c7fa]"
+                                                                                >
+                                                                                    +{conv.queuedCount}
+                                                                                </span>
+                                                                            )}
                                                                             {conv.hasError ? (
                                                                                 <AlertCircleRedIcon
                                                                                     className="w-4 h-4"
                                                                                     title={conv.errorMessage || 'Lỗi hạn mức lượt chạy'}
                                                                                 />
+                                                                            ) : conv.turnState?.phase === 'retrying' ? (
+                                                                                <span
+                                                                                    title={conv.turnState.lastError || 'Đang thử lại phản hồi'}
+                                                                                    className="px-1.5 py-0.5 rounded-full text-xs font-medium tabular-nums bg-[#3a2d12] text-[#fde293]"
+                                                                                >
+                                                                                    Thử lại {conv.turnState.retryAttempt || 1}/{conv.turnState.maxRetries || 2}
+                                                                                </span>
                                                                             ) : conv.isRunning ? (
                                                                                 <PcRunningArcSpinner className="w-[15px] h-[15px] text-[#ec407a]" />
                                                                             ) : conv.unread ? (
@@ -5471,7 +7445,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                                                 ))
                                                             )}
 
-                                                            {proj.totalCount > defaultLimit && (
+                                                            {proj.totalCount > defaultLimit && !searchActive && (
                                                                 <button
                                                                     type="button"
                                                                     onClick={() =>
@@ -5497,6 +7471,43 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                             );
                                         })
                                     )}
+                                    {searchActive &&
+                                        !deepSearchLoading &&
+                                        deepSearchResults.length === 0 &&
+                                        filterConvList(effectivePinnedConversations).length === 0 &&
+                                        effectiveProjects.every(p => filterConvList(p.conversations).length === 0) && (
+                                            <div className="py-8 px-2 text-center space-y-2.5 text-xs text-[#9e9e9e]">
+                                                <div>Không tìm thấy hội thoại khớp &ldquo;{searchQuery}&rdquo;.</div>
+                                                <div className="flex flex-wrap justify-center gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setSearchQuery('')}
+                                                        className="px-3 py-1.5 rounded-lg bg-[#2a2b28] border border-[#3e3f3c] text-[#e3e3e3] font-medium cursor-pointer"
+                                                    >
+                                                        Xóa từ khóa
+                                                    </button>
+                                                    {(
+                                                        [
+                                                            { id: 'antigravity', label: 'Antigravity' },
+                                                            { id: 'antigravity2', label: 'Antigravity 2' },
+                                                            { id: 'win1', label: win1HostName },
+                                                            { id: 'chatgpt', label: 'ChatGPT PC' },
+                                                        ] as const
+                                                    )
+                                                        .filter(p => p.id !== activeProvider)
+                                                        .map(p => (
+                                                            <button
+                                                                key={`mob_sw_${p.id}`}
+                                                                type="button"
+                                                                onClick={() => handleSwitchProvider(p.id)}
+                                                                className="px-3 py-1.5 rounded-lg bg-[#8ab4f8]/15 border border-[#8ab4f8]/40 text-[#8ab4f8] font-medium cursor-pointer"
+                                                            >
+                                                                Tìm bên {p.label}
+                                                            </button>
+                                                        ))}
+                                                </div>
+                                            </div>
+                                        )}
                                 </div>
                             )}
                         </section>
@@ -5504,6 +7515,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                 ) : (
                     /* MOBILE ACTIVE CONVERSATION VIEW (Exact match to antigravity.google.com) */
                     <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative bg-[#1e1f1c]">
+                        {renderInConvSearchBar(false)}
                         <div
                             ref={mobileScrollContainerRef}
                             onScroll={e => {
@@ -5511,19 +7523,24 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                 const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
                                 setShowMobileScrollDownBtn(dist > 60);
                             }}
-                            className="flex-1 min-h-0 overflow-y-auto px-3.5 pt-3 pb-4 space-y-3.5 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+                            className="flex-1 min-h-0 overflow-y-auto px-3.5 pt-3 pb-4 space-y-3.5 select-text [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
                         >
                             {isLoadingConversation && !activeConversation ? (
                                 <div className="py-16 flex flex-col items-center justify-center gap-2.5 text-[#8e8e8e]">
                                     <Loader2 className="w-6 h-6 animate-spin text-[#8ab4f8]" />
                                     <span className="text-[13.5px]">Đang tải nội dung phiên làm việc...</span>
                                 </div>
-                            ) : activeConversation?.messages && activeConversation.messages.length > 0 ? (
-                                renderedMobileMessages
                             ) : (
-                                <div className="py-12 text-center text-[14px] text-[#8e8e8e]">
-                                    Chưa có bước hiển thị trong phiên này. Hãy gửi yêu cầu bên dưới để tiếp tục.
-                                </div>
+                                <>
+                                    {activeConversation?.messages && activeConversation.messages.length > 0 ? (
+                                        renderedMobileMessages
+                                    ) : !(activeConversation?.queuedPrompts?.length || activeConversation?.turnState?.phase === 'retrying' || activeConversation?.hasError) ? (
+                                        <div className="py-12 text-center text-[14px] text-[#8e8e8e]">
+                                            Chưa có bước hiển thị trong phiên này. Hãy gửi yêu cầu bên dưới để tiếp tục.
+                                        </div>
+                                    ) : null}
+                                    {renderTurnStatusAndQueuedCards(false)}
+                                </>
                             )}
                             <div ref={mobileMessagesEndRef} />
                         </div>
@@ -5616,13 +7633,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                             type="button"
                                             onMouseDown={e => e.preventDefault()}
                                             onClick={() => {
-                                                if (isChatGPT) {
-                                                    setChatgptTargetProjectId(p.id);
-                                                    setChatgptTargetProjectName(p.name);
-                                                } else {
-                                                    setTargetNewProjectId(p.id);
-                                                    setTargetNewProjectName(p.name);
-                                                }
+                                                setEffectiveTargetProject(p.id, p.name);
                                                 setPromptText(prev =>
                                                     /@\w*$/.test(prev)
                                                         ? prev.replace(/@\w*$/, `@${p.name} `)
@@ -5677,11 +7688,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                                 type="button"
                                                 onMouseDown={e => e.preventDefault()}
                                                 onClick={() => {
-                                                    if (isChatGPT) {
-                                                        setChatgptSelectedModel(m);
-                                                    } else {
-                                                        setSelectedModel(m);
-                                                    }
+                                                    setEffectiveSelectedModel(m);
                                                     setModelMenuOpen(false);
                                                 }}
                                                 className={`w-full px-5 py-3 flex items-center justify-between hover:bg-white/5 active:bg-white/10 text-left transition-colors ${
@@ -5707,6 +7714,21 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                                     )}
                                                 </div>
                                                 <div className="flex items-center gap-2.5 shrink-0">
+                                                    {!isChatGPT && m.remainingFraction !== undefined && (
+                                                        <span
+                                                            className={`text-[12.5px] tabular-nums ${
+                                                                Math.round((m.remainingFraction ?? 0.99) * 100) <= 0
+                                                                    ? 'text-[#f28b82] font-semibold'
+                                                                    : Math.round((m.remainingFraction ?? 0.99) * 100) <= 15
+                                                                    ? 'text-[#fdd663] font-medium'
+                                                                    : 'text-[#8e8e8e]'
+                                                            }`}
+                                                        >
+                                                            {Math.round((m.remainingFraction ?? 0.99) * 100) <= 0
+                                                                ? 'Hết quota (0%)'
+                                                                : `${Math.round((m.remainingFraction ?? 0.99) * 100)}%`}
+                                                        </span>
+                                                    )}
                                                     {isSelected && <Check className="w-4 h-4 text-[#e3e3e3]" />}
                                                     <ChevronRight className="w-4 h-4 text-[#787878]" />
                                                 </div>
@@ -5841,23 +7863,45 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                     <Mic className="w-[18px] h-[18px]" />
                                 </button>
 
-                                {(isSubmitting || activeConversation?.isRunning) && !promptText.trim() && attachedMedia.length === 0 ? (
+                                {(isSubmitting ||
+                                    isCancelling ||
+                                    activeConversation?.isRunning ||
+                                    activeConversation?.turnState?.phase === 'retrying' ||
+                                    activeConversation?.turnState?.phase === 'cancelling') && (
                                     <button
                                         type="button"
                                         onMouseDown={e => e.preventDefault()}
                                         onClick={handleCancelRunning}
+                                        disabled={isCancelling}
                                         title="Dừng tác vụ đang chạy"
-                                        className="w-9 h-9 rounded-full bg-[#333432] hover:bg-[#3e3f3c] flex items-center justify-center transition-all active:scale-95 shrink-0"
+                                        data-testid="mobile-stop-btn"
+                                        className="w-9 h-9 rounded-full bg-[#333432] hover:bg-[#3e3f3c] flex items-center justify-center transition-all active:scale-95 shrink-0 disabled:opacity-60"
                                     >
                                         <span className="w-3.5 h-3.5 rounded-[3px] bg-[#ea4335] block" />
                                     </button>
-                                ) : (
+                                )}
+
+                                {(promptText.trim() ||
+                                    attachedMedia.length > 0 ||
+                                    !(
+                                        isSubmitting ||
+                                        isCancelling ||
+                                        activeConversation?.isRunning ||
+                                        activeConversation?.turnState?.phase === 'retrying' ||
+                                        activeConversation?.turnState?.phase === 'cancelling'
+                                    )) && (
                                     <button
                                         type="button"
                                         onMouseDown={e => e.preventDefault()}
                                         onClick={handleSubmitPrompt}
                                         disabled={isSubmitting || (!promptText.trim() && attachedMedia.length === 0)}
-                                        title="Gửi yêu cầu"
+                                        title={
+                                            activeConversation?.isRunning ||
+                                            activeConversation?.turnState?.phase === 'retrying'
+                                                ? 'Đưa vào hàng chờ'
+                                                : 'Gửi yêu cầu'
+                                        }
+                                        data-testid="mobile-submit-btn"
                                         className={`w-9 h-9 rounded-full flex items-center justify-center transition-all active:scale-95 shrink-0 ${
                                             !isSubmitting && (promptText.trim() || attachedMedia.length > 0)
                                                 ? isChatGPT
@@ -5885,7 +7929,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                     onClick={() => setHistoryModalOpen(false)}
                 >
                     <div
-                        className="w-full max-w-lg rounded-2xl bg-white text-[#1f1f1f] border border-[#dfdfd8] p-4 space-y-3 shadow-2xl"
+                        className="w-full max-w-xl rounded-2xl bg-white text-[#1f1f1f] border border-[#dfdfd8] p-4 space-y-3 shadow-2xl"
                         onClick={e => e.stopPropagation()}
                     >
                         <div className="flex items-center justify-between border-b border-[#ececea] pb-2.5">
@@ -5903,35 +7947,111 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                 <X className="w-4 h-4" />
                             </button>
                         </div>
-                        <div className="max-h-96 overflow-y-auto space-y-1 pr-1">
-                            {effectiveProjects.flatMap(p => p.conversations).map(conv => (
+
+                        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#f7f7f5] border border-[#dfdfd8]">
+                            <Search className={`w-4 h-4 shrink-0 ${deepSearchLoading ? 'text-indigo-500 animate-pulse' : 'text-[#8e8e8e]'}`} />
+                            <input
+                                type="text"
+                                value={historySearchQuery}
+                                onChange={e => setHistorySearchQuery(e.target.value)}
+                                placeholder="Tìm không dấu toàn bộ lịch sử tiêu đề & nội dung..."
+                                className="w-full bg-transparent text-xs text-[#1f1f1f] placeholder-[#8e8e8e] outline-none"
+                                autoFocus
+                            />
+                            {historySearchQuery && (
                                 <button
-                                    key={`hist_${conv.id}`}
                                     type="button"
-                                    onClick={() => handleOpenConversation(conv)}
-                                    className="w-full px-3 py-2 rounded-lg hover:bg-black/[0.04] flex items-center justify-between text-left gap-3"
+                                    onClick={() => setHistorySearchQuery('')}
+                                    aria-label="Xóa tìm lịch sử"
+                                    className="text-[#787878] hover:text-[#1f1f1f] cursor-pointer"
                                 >
-                                    <div className="min-w-0">
-                                        <div className="text-[13.5px] font-medium text-[#1f1f1f] truncate">
-                                            {conv.title}
-                                        </div>
-                                        <div className="text-xs text-[#787878] flex items-center gap-1.5">
-                                            <Folder className="w-3 h-3" />
-                                            <span>{conv.projectName}</span>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-2 shrink-0">
-                                        {conv.hasError && (
-                                            <AlertCircleRedIcon className="w-3.5 h-3.5" />
-                                        )}
-                                        {conv.isRunning && (
-                                            <PcRunningArcSpinner className="w-3.5 h-3.5 text-[#1967d2]" />
-                                        )}
-                                        <span className="text-[12px] text-[#787878]">{conv.relativeTime}</span>
-                                    </div>
+                                    <X className="w-3.5 h-3.5" />
                                 </button>
-                            ))}
+                            )}
                         </div>
+
+                        {(() => {
+                            const hTokens = tokenizeVnSearch(historySearchQuery);
+                            const localAll = effectiveProjects.flatMap(p => p.conversations);
+                            let listToShow: CompanionConversationItem[] = [];
+                            if (hTokens.length === 0) {
+                                listToShow = localAll;
+                            } else {
+                                const byId = new Map<string, CompanionConversationItem>();
+                                deepSearchResults.forEach(c => byId.set(c.id, c));
+                                localAll.forEach(c => {
+                                    if (!byId.has(c.id) && matchesAllVnTokens(`${c.title} ${c.projectName} ${c.workspaceTag || ''}`, hTokens)) {
+                                        byId.set(c.id, c);
+                                    }
+                                });
+                                listToShow = Array.from(byId.values()).sort(
+                                    (a, b) => Number(b.matchScore || 0) - Number(a.matchScore || 0) || (b.lastModifiedEpoch || 0) - (a.lastModifiedEpoch || 0)
+                                );
+                            }
+                            return (
+                                <>
+                                    <div className="text-xs text-[#787878] flex items-center justify-between tabular-nums">
+                                        <span>
+                                            {hTokens.length > 0
+                                                ? `${listToShow.length} hội thoại khớp (cả lịch sử sâu)`
+                                                : `${listToShow.length} hội thoại gần nhất`}
+                                        </span>
+                                        {deepSearchLoading && hTokens.length >= 1 && (
+                                            <span className="text-indigo-600 font-medium">Đang tìm toàn PC...</span>
+                                        )}
+                                    </div>
+                                    <div className="max-h-96 overflow-y-auto space-y-1 pr-1">
+                                        {listToShow.length === 0 ? (
+                                            <div className="py-10 text-center text-xs text-[#787878] space-y-2">
+                                                <div>Không tìm thấy hội thoại nào khớp &ldquo;{historySearchQuery}&rdquo;.</div>
+                                                {historySearchQuery && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setHistorySearchQuery('')}
+                                                        className="px-3 py-1 rounded-lg bg-[#f3f3f1] border border-[#dfdfd8] text-[#1f1f1f] font-medium cursor-pointer"
+                                                    >
+                                                        Xóa bộ lọc
+                                                    </button>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            listToShow.map(conv => (
+                                                <button
+                                                    key={`hist_${conv.id}`}
+                                                    type="button"
+                                                    onClick={() => handleOpenConversation(conv)}
+                                                    className="w-full px-3 py-2 rounded-lg hover:bg-black/[0.04] flex items-start justify-between text-left gap-3 cursor-pointer"
+                                                >
+                                                    <div className="min-w-0 space-y-0.5">
+                                                        <div className="text-[13.5px] font-medium text-[#1f1f1f] truncate">
+                                                            <HighlightText text={maskEmailsInText(conv.title)} query={historySearchQuery} />
+                                                        </div>
+                                                        {conv.snippet && hTokens.length > 0 && (
+                                                            <div className="text-xs text-[#5f6368] line-clamp-2 break-words">
+                                                                <HighlightText text={maskEmailsInText(conv.snippet)} query={historySearchQuery} />
+                                                            </div>
+                                                        )}
+                                                        <div className="text-xs text-[#787878] flex items-center gap-1.5">
+                                                            <Folder className="w-3 h-3 shrink-0" />
+                                                            <span className="truncate">{conv.projectName}</span>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                                                        {conv.hasError && (
+                                                            <AlertCircleRedIcon className="w-3.5 h-3.5" />
+                                                        )}
+                                                        {conv.isRunning && (
+                                                            <PcRunningArcSpinner className="w-3.5 h-3.5 text-[#1967d2]" />
+                                                        )}
+                                                        <span className="text-xs text-[#787878] tabular-nums">{conv.relativeTime}</span>
+                                                    </div>
+                                                </button>
+                                            ))
+                                        )}
+                                    </div>
+                                </>
+                            );
+                        })()}
                     </div>
                 </div>
             )}
@@ -5998,7 +8118,9 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                         <div className="flex items-center justify-between border-b border-[#ececea] pb-2.5">
                             <div className="flex items-center gap-2">
                                 <Archive className="w-4 h-4 text-[#5f6368]" />
-                                <h3 className="text-[14.5px] font-medium">Customizations ({hostName})</h3>
+                                <h3 className="text-[14.5px] font-medium">
+                                    Customizations ({isAg2 ? ag2HostName : isWin1 ? win1HostName : hostName})
+                                </h3>
                             </div>
                             <button
                                 type="button"
@@ -6110,13 +8232,7 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                                     key={`modal_proj_${p.id}`}
                                     type="button"
                                     onClick={() => {
-                                        if (isChatGPT) {
-                                            setChatgptTargetProjectId(p.id);
-                                            setChatgptTargetProjectName(p.name);
-                                        } else {
-                                            setTargetNewProjectId(p.id);
-                                            setTargetNewProjectName(p.name);
-                                        }
+                                        setEffectiveTargetProject(p.id, p.name);
                                         setNewProjectModalOpen(false);
                                         navigateToConversation(null, true);
                                         setTimeout(() => {
@@ -6148,48 +8264,332 @@ export const RemoteAntigravityAgent: React.FC<RemoteAntigravityAgentProps> = ({
                     onClick={() => setSettingsModalOpen(false)}
                 >
                     <div
-                        className="w-full max-w-sm rounded-2xl bg-[#242424] text-white border border-[#383838] p-4 space-y-4 shadow-2xl"
+                        className="w-full max-w-md max-h-[88vh] overflow-y-auto rounded-2xl bg-[#242424] text-white border border-[#383838] p-4 space-y-3.5 shadow-2xl"
                         onClick={e => e.stopPropagation()}
                     >
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
                                 {isChatGPT ? (
                                     <ChatGPTLogo className="w-5 h-5 text-white" />
+                                ) : isWin1 ? (
+                                    <img
+                                        src="/icons/dopamine-3d/sb_pc_monitor.png"
+                                        alt=""
+                                        className="w-5 h-5 object-contain"
+                                    />
                                 ) : (
                                     <AntigravityRibbonLogo className="w-5 h-5" />
                                 )}
                                 <h3 className="text-[15px] font-medium text-white">
-                                    {isChatGPT ? 'ChatGPT PC Settings' : 'Antigravity Settings'}
+                                    {isChatGPT
+                                        ? 'ChatGPT PC Settings'
+                                        : isAg2
+                                        ? 'Antigravity 2 (acct2) Settings'
+                                        : isWin1
+                                        ? `${win1HostName} (@win1) Settings`
+                                        : 'Antigravity Settings'}
                                 </h3>
                             </div>
                             <button
                                 type="button"
                                 onClick={() => setSettingsModalOpen(false)}
-                                className="text-[#8e8e8e] hover:text-white"
+                                className="text-[#8e8e8e] hover:text-white p-1 rounded-lg hover:bg-white/5"
                             >
                                 <X className="w-4 h-4" />
                             </button>
                         </div>
 
                         <div className="space-y-2.5 text-[13.5px]">
+                            {/* 1. Tài khoản Web Portal aihot.vn đang đăng nhập */}
+                            <div className="p-3 rounded-xl bg-[#1c1c1c] border border-[#363636] space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="text-[#8e8e8e] text-xs font-medium">
+                                        Tài khoản đang đăng nhập (aihot.vn)
+                                    </div>
+                                    <span className="px-2 py-0.5 rounded-md bg-[#2a3b2e] text-[#81c995] text-xs font-semibold">
+                                        {roleDisplayLabel}
+                                    </span>
+                                </div>
+                                <div className="flex items-center gap-2.5">
+                                    <div className="w-9 h-9 rounded-full bg-[#004d40] border border-[#57ab5a]/60 text-white text-sm font-semibold flex items-center justify-center shrink-0">
+                                        {avatarInitials}
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                        <div className="text-white font-medium truncate">
+                                            {member.display_name || member.username}
+                                        </div>
+                                        <div className="text-xs text-[#8ab4f8] font-medium truncate">
+                                            Tên đăng nhập: @{member.username}
+                                        </div>
+                                        {member.contact && (
+                                            <div className="text-xs text-[#9e9e9e] truncate">
+                                                Liên hệ: {formatLoginEmail(member.contact)}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                                {(onOpenProfile || onLogout) && (
+                                    <div className="flex items-center gap-2 pt-1">
+                                        {onOpenProfile && (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setSettingsModalOpen(false);
+                                                    onOpenProfile();
+                                                }}
+                                                className="flex-1 py-1.5 px-2.5 rounded-lg bg-[#2b2c29] hover:bg-[#353632] border border-[#3e3f3b] text-[#e3e3e3] text-xs font-medium inline-flex items-center justify-center gap-1.5 transition-colors"
+                                            >
+                                                <User className="w-3.5 h-3.5" />
+                                                <span>Hồ sơ tài khoản</span>
+                                            </button>
+                                        )}
+                                        {onLogout && (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setSettingsModalOpen(false);
+                                                    onLogout();
+                                                }}
+                                                className="flex-1 py-1.5 px-2.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/35 text-rose-300 text-xs font-medium inline-flex items-center justify-center gap-1.5 transition-colors"
+                                            >
+                                                <LogOut className="w-3.5 h-3.5" />
+                                                <span>Đăng xuất / Đổi TK</span>
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* 2. Tài khoản AI đang active trên PC / Kho */}
+                            <div className="p-3 rounded-xl bg-[#1c1c1c] border border-[#363636] space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="text-[#8e8e8e] text-xs font-medium">
+                                        Tài khoản AI đang login ({isSystemOwner ? 'Trên PC' : 'Đang chọn'})
+                                    </div>
+                                    {isSystemOwner && (
+                                        <button
+                                            type="button"
+                                            onClick={toggleAccountEmailMask}
+                                            className="px-2 py-0.5 rounded-md bg-[#2b2c29] hover:bg-[#353632] text-[#b8b8b8] text-xs inline-flex items-center gap-1 transition-colors"
+                                            title={showAccountEmails ? 'Che email khi livestream' : 'Hiện đầy đủ email'}
+                                        >
+                                            {showAccountEmails ? (
+                                                <EyeOff className="w-3.5 h-3.5" />
+                                            ) : (
+                                                <Eye className="w-3.5 h-3.5" />
+                                            )}
+                                            <span>{showAccountEmails ? 'Che email' : 'Hiện email'}</span>
+                                        </button>
+                                    )}
+                                </div>
+
+                                <div
+                                    className={`p-2.5 rounded-lg border space-y-0.5 ${
+                                        activeProvider === 'antigravity'
+                                            ? 'bg-[#242825] border-[#57ab5a]/45'
+                                            : 'bg-[#171717] border-[#2c2c2c]'
+                                    }`}
+                                >
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="text-xs font-medium text-[#b8b8b8] inline-flex items-center gap-1.5">
+                                            <AntigravityRibbonLogo className="w-3.5 h-3.5" />
+                                            <span>AG1 · Antigravity (Bản chính)</span>
+                                        </span>
+                                        {resolvedActiveAgAccount?.tier && (
+                                            <span className="px-1.5 py-0.5 rounded bg-[#363734] text-[#81c995] text-xs font-semibold">
+                                                {resolvedActiveAgAccount.tier}
+                                            </span>
+                                        )}
+                                    </div>
+                                    {resolvedActiveAgAccount ? (
+                                        <>
+                                            <div className="text-white text-xs font-medium truncate">
+                                                {resolvedActiveAgAccount.name ||
+                                                    formatLoginEmail(resolvedActiveAgAccount.email) ||
+                                                    'Đang hoạt động'}
+                                            </div>
+                                            {resolvedActiveAgAccount.email && (
+                                                <div className="text-xs text-[#8ab4f8] truncate">
+                                                    {formatLoginEmail(resolvedActiveAgAccount.email)}
+                                                </div>
+                                            )}
+                                            <div className="text-xs text-[#787878]">
+                                                Nguồn: {resolvedActiveAgAccount.source}
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <div className="text-xs text-[#787878]">
+                                            Chưa ghi nhận tài khoản đang chọn
+                                        </div>
+                                    )}
+                                </div>
+
+                                {(isSystemOwner || isAg2) && (
+                                    <div
+                                        className={`p-2.5 rounded-lg border space-y-0.5 ${
+                                            isAg2
+                                                ? 'bg-[#251f38] border-[#7c3aed]/60'
+                                                : 'bg-[#171717] border-[#2c2c2c]'
+                                        }`}
+                                    >
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="text-xs font-medium text-[#b8b8b8] inline-flex items-center gap-1.5">
+                                                <AntigravityRibbonLogo className="w-3.5 h-3.5" />
+                                                <span>AG2 · Antigravity 2 (acct2)</span>
+                                            </span>
+                                            {resolvedActiveAg2Account?.tier && (
+                                                <span className="px-1.5 py-0.5 rounded bg-[#7c3aed]/25 text-[#d8b4fe] text-xs font-semibold">
+                                                    {resolvedActiveAg2Account.tier}
+                                                </span>
+                                            )}
+                                        </div>
+                                        {resolvedActiveAg2Account ? (
+                                            <>
+                                                <div className="text-white text-xs font-medium truncate">
+                                                    {resolvedActiveAg2Account.name ||
+                                                        formatLoginEmail(resolvedActiveAg2Account.email) ||
+                                                        'Đang hoạt động'}
+                                                </div>
+                                                {resolvedActiveAg2Account.email && (
+                                                    <div className="text-xs text-[#c4b5fd] truncate">
+                                                        {formatLoginEmail(resolvedActiveAg2Account.email)}
+                                                    </div>
+                                                )}
+                                                <div className="text-xs text-[#787878]">
+                                                    Nguồn: {resolvedActiveAg2Account.source} ·{' '}
+                                                    {resolvedActiveAg2Account.online ? 'Đang chạy' : 'Tự mở khi giao việc'}
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <div className="text-xs text-[#787878]">
+                                                Chưa ghi nhận tài khoản Antigravity 2
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {(isSystemOwner || isWin1) && (
+                                    <div
+                                        className={`p-2.5 rounded-lg border space-y-0.5 ${
+                                            isWin1
+                                                ? 'bg-[#16272e] border-[#0891b2]/60'
+                                                : 'bg-[#171717] border-[#2c2c2c]'
+                                        }`}
+                                    >
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="text-xs font-medium text-[#b8b8b8] inline-flex items-center gap-1.5">
+                                                <img
+                                                    src="/icons/dopamine-3d/sb_pc_monitor.png"
+                                                    alt=""
+                                                    className="w-3.5 h-3.5 object-contain"
+                                                />
+                                                <span>AG3 · {win1HostName} (@win1)</span>
+                                            </span>
+                                            {resolvedActiveWin1Account?.tier && (
+                                                <span className="px-1.5 py-0.5 rounded bg-[#0891b2]/25 text-[#67e8f9] text-xs font-semibold">
+                                                    {resolvedActiveWin1Account.tier}
+                                                </span>
+                                            )}
+                                        </div>
+                                        {resolvedActiveWin1Account ? (
+                                            <>
+                                                <div className="text-white text-xs font-medium truncate">
+                                                    {resolvedActiveWin1Account.name ||
+                                                        formatLoginEmail(resolvedActiveWin1Account.email) ||
+                                                        win1HostName}
+                                                </div>
+                                                {resolvedActiveWin1Account.email && (
+                                                    <div className="text-xs text-[#67e8f9] truncate">
+                                                        {formatLoginEmail(resolvedActiveWin1Account.email)}
+                                                    </div>
+                                                )}
+                                                <div className="text-xs text-[#787878]">
+                                                    Nguồn: {resolvedActiveWin1Account.source} ·{' '}
+                                                    {win1Online ? 'Đang chạy · SSH Tunnel :18061' : 'Offline / Chờ kết nối'}
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <div className="text-xs text-[#787878]">
+                                                {win1Online
+                                                    ? `${win1HostName} đang chạy (chưa có email tài khoản)`
+                                                    : `Chưa kết nối tới ${win1HostName}`}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {(isSystemOwner || isChatGPT) && (
+                                    <div
+                                        className={`p-2.5 rounded-lg border space-y-0.5 ${
+                                            isChatGPT
+                                                ? 'bg-[#1a2c26] border-[#10a37f]/50'
+                                                : 'bg-[#171717] border-[#2c2c2c]'
+                                        }`}
+                                    >
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="text-xs font-medium text-[#b8b8b8] inline-flex items-center gap-1.5">
+                                                <ChatGPTLogo className="w-3.5 h-3.5" />
+                                                <span>ChatGPT PC (.codex)</span>
+                                            </span>
+                                            {resolvedActiveChatgptAccount?.planType && (
+                                                <span className="px-1.5 py-0.5 rounded bg-[#10a37f]/20 text-[#6ee7b7] text-xs font-semibold">
+                                                    {resolvedActiveChatgptAccount.planType}
+                                                </span>
+                                            )}
+                                        </div>
+                                        {resolvedActiveChatgptAccount ? (
+                                            <>
+                                                {resolvedActiveChatgptAccount.email ? (
+                                                    <div className="text-white text-xs font-medium truncate">
+                                                        {formatLoginEmail(resolvedActiveChatgptAccount.email)}
+                                                    </div>
+                                                ) : (
+                                                    <div className="text-white text-xs font-medium truncate">
+                                                        {resolvedActiveChatgptAccount.name || 'ChatGPT PC'}
+                                                    </div>
+                                                )}
+                                                {resolvedActiveChatgptAccount.name &&
+                                                    resolvedActiveChatgptAccount.email && (
+                                                        <div className="text-xs text-[#9e9e9e] truncate">
+                                                            {resolvedActiveChatgptAccount.name}
+                                                        </div>
+                                                    )}
+                                                <div className="text-xs text-[#787878]">
+                                                    Nguồn: {resolvedActiveChatgptAccount.source}
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <div className="text-xs text-[#787878]">
+                                                Chưa phát hiện phiên ChatGPT PC
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* 3. Connected Machine */}
                             <div className="p-3 rounded-xl bg-[#1c1c1c] border border-[#303030] space-y-1">
-                                <div className="text-[#8e8e8e] text-[12px]">Connected Machine</div>
-                                <div className="flex items-center gap-2 text-white font-medium">
-                                    <span className="w-2 h-2 rounded-full bg-[#57ab5a]" />
-                                    {isChatGPT ? 'ChatGPT PC (.codex Realtime Sync)' : `${hostName} (WebSocket Realtime Active)`}
+                                <div className="text-[#8e8e8e] text-xs">Connected Machine</div>
+                                <div className="flex items-center gap-2 text-white font-medium text-xs">
+                                    <span
+                                        className={`w-2 h-2 rounded-full ${
+                                            isWin1 && !win1Online ? 'bg-amber-400' : 'bg-[#57ab5a]'
+                                        }`}
+                                    />
+                                    {isChatGPT
+                                        ? 'ChatGPT PC (.codex Realtime Sync)'
+                                        : isAg2
+                                        ? `${ag2HostName} (${ag2Online ? 'Đang chạy · WebSocket Realtime Active' : 'Tự mở acct2 khi giao việc'})`
+                                        : isWin1
+                                        ? `${win1HostName} (${win1Online ? 'Đang chạy · SSH Tunnel :18061 -> :8047' : 'Offline · Kiểm tra WIN1-17TRIEU'})`
+                                        : `${hostName} (WebSocket Realtime Active)`}
                                 </div>
                             </div>
 
+                            {/* 4. Execution Mode */}
                             <div className="p-3 rounded-xl bg-[#1c1c1c] border border-[#303030] space-y-1">
-                                <div className="text-[#8e8e8e] text-[12px]">Account</div>
-                                <div className="text-white font-medium">
-                                    {member.display_name || member.username} ({member.role || 'member'})
-                                </div>
-                            </div>
-
-                            <div className="p-3 rounded-xl bg-[#1c1c1c] border border-[#303030] space-y-1">
-                                <div className="text-[#8e8e8e] text-[12px]">Execution Mode</div>
-                                <div className="text-[#81c995] font-medium">
+                                <div className="text-[#8e8e8e] text-xs">Execution Mode</div>
+                                <div className="text-[#81c995] font-medium text-xs">
                                     {isChatGPT ? `${chatgptPermMode} · ${effectiveSelectedModel.label}` : `${execMode} · ${envMode} Workspace`}
                                 </div>
                             </div>

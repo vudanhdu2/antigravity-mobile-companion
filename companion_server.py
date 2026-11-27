@@ -109,7 +109,7 @@ CONFIG_FILE = COMPANION_DATA_DIR / "config.json"
 CMD_STATE_DB = COMPANION_DATA_DIR / "cmd_state.db"
 RUNTIME_STATE_FILE = COMPANION_DATA_DIR / "runtime_state.json"
 
-COMPANION_RUNTIME_VERSION = "2026.11.08-v2.4.0-chatgpt-codex-dual-engine"
+COMPANION_RUNTIME_VERSION = "2026.11.27-v2.5.0-dedup-ws-subagent-ime-parity"
 CMD_TTL_MS = 180_000          # Hard cap: 3 minutes max command age
 CMD_CLAIM_LEASE_MS = 60_000   # Atomic claim lease: 60 seconds
 
@@ -216,9 +216,9 @@ def append_security_audit(event: str, ip: str, detail: str, level: str = "info")
 # 1. WEBSOCKET REALTIME ENGINE (RFC 6455)
 # ============================================================================
 
-def ws_send_frame(client: dict, payload_str: str, opcode: int = 0x1) -> bool:
-    """Gửi frame WebSocket RFC-6455 từ server xuống trình duyệt/điện thoại."""
-    data = payload_str.encode("utf-8")
+def ws_send_frame(client: dict, payload: str | bytes, opcode: int = 0x1) -> bool:
+    """Gửi frame WebSocket RFC-6455 từ server xuống trình duyệt/điện thoại (bảo toàn binary ping/close)."""
+    data = payload.encode("utf-8") if isinstance(payload, str) else bytes(payload or b"")
     length = len(data)
     header = bytearray([0x80 | (opcode & 0x0F)])
     if length < 126:
@@ -235,6 +235,27 @@ def ws_send_frame(client: dict, payload_str: str, opcode: int = 0x1) -> bool:
         return True
     except Exception:
         return False
+
+
+def _is_hidden_ai_spawned_trajectory(cid: str, live_obj: dict | None = None) -> bool:
+    """Trả True nếu phiên là AI subagent hoặc run_workflow worker cần ẩn khỏi thanh bên."""
+    cid_s = str(cid or "").strip()
+    if not cid_s:
+        return True
+    if not isinstance(live_obj, dict):
+        return False
+    if int(live_obj.get("nestingDepth") or 0) != 0 or bool(live_obj.get("killed")):
+        return True
+    if str(live_obj.get("parentConversationId") or "").strip():
+        return True
+    if str(live_obj.get("agentName") or "").strip():
+        return True
+    meta = live_obj.get("trajectoryMetadata")
+    if isinstance(meta, dict):
+        src_meta = meta.get("sourceMetadata")
+        if isinstance(src_meta, dict) and (bool(src_meta.get("isSubagent")) or bool(src_meta.get("workflowWorker"))):
+            return True
+    return False
 
 
 def ws_read_frame(sock: socket.socket) -> tuple[int | None, bytes]:
@@ -3417,19 +3438,21 @@ def read_chatgpt_conversation_detail(cid: str, limit_steps: int = 1500) -> dict:
                 t_end = float(t_obj.get("completedAt") or t_start)
                 if t_end > last_mod_epoch:
                     last_mod_epoch = t_end
-                # Avoid duplicating if thread_history_1.sqlite already recorded this exact user prompt
+                # Avoid duplicating if thread_history_1.sqlite already recorded this exact user prompt (scan all messages, not just [-6:])
+                t_prompt_clean = _sanitize_companion_text(t_prompt)
                 already_recorded = any(
-                    m.get("role") == "user" and str(m.get("content") or "").strip() == t_prompt
-                    for m in messages[-6:]
+                    m.get("role") == "user"
+                    and _sanitize_companion_text(str(m.get("content") or "").strip()) == t_prompt_clean
+                    for m in messages
                 )
                 if already_recorded:
                     continue
-                if t_prompt:
+                if t_prompt_clean:
                     messages.append({
                         "id": f"cg_cont_u_{t_idx}",
                         "idx": len(messages),
                         "role": "user",
-                        "content": t_prompt,
+                        "content": t_prompt_clean,
                         "timestamp": int(t_start * 1000),
                     })
                 t_content = _sanitize_companion_text(str(t_obj.get("content") or "").strip())
@@ -3460,10 +3483,11 @@ def read_chatgpt_conversation_detail(cid: str, limit_steps: int = 1500) -> dict:
         act_upd = float(act_entry.get("updatedAt") or now)
         if act_upd > last_mod_epoch:
             last_mod_epoch = act_upd
-        act_prompt = str(act_entry.get("prompt") or "").strip()
+        act_prompt = _sanitize_companion_text(str(act_entry.get("prompt") or "").strip())
         if act_prompt and not any(
-            m.get("role") == "user" and str(m.get("content") or "").strip() == act_prompt
-            for m in messages[-4:]
+            m.get("role") == "user"
+            and _sanitize_companion_text(str(m.get("content") or "").strip()) == act_prompt
+            for m in messages
         ):
             messages.append({
                 "id": f"cg_act_u_{int(act_start * 1000)}",
@@ -4309,6 +4333,8 @@ def build_local_overview(cfg: dict) -> dict:
     for cid, title, preview, step_count, last_mod_str, ws_uris_str, status, project_id, not_fully_idle in rows:
         seen_cids.add(cid)
         live = live_summaries.get(cid) or {}
+        if _is_hidden_ai_spawned_trajectory(cid, live):
+            continue
         live_ann = live.get("annotations") or {}
         ann = ann_map.get(cid) or {}
 
@@ -4576,11 +4602,17 @@ def read_local_conversation_detail(cid: str, cfg: dict, limit_steps: int = 180) 
                             "id": f"step_u_{s_idx}",
                             "idx": s_idx,
                             "role": "user",
-                            "content": content,
+                            "content": _sanitize_companion_text(content),
                             "timestamp": ts_ms,
                         }
                         if media_arr:
                             msg_obj["media"] = media_arr
+                        # Append-only transcript_full.jsonl emits a new line at the same (or rewound) step_index
+                        # when a user edits/retries a prompt; discard superseded steps >= s_idx to avoid duplicate bubbles.
+                        messages = [
+                            m for m in messages
+                            if m.get("idx") is None or int(m.get("idx")) < s_idx
+                        ]
                         messages.append(msg_obj)
 
                 elif stype == "PLANNER_RESPONSE":
@@ -4611,7 +4643,7 @@ def read_local_conversation_detail(cid: str, cfg: dict, limit_steps: int = 180) 
                                 "output": "",
                             })
                     if content or thinking or tcs:
-                        messages.append({
+                        a_msg = {
                             "id": f"step_a_{s_idx}",
                             "idx": s_idx,
                             "role": "assistant",
@@ -4621,7 +4653,11 @@ def read_local_conversation_detail(cid: str, cfg: dict, limit_steps: int = 180) 
                             "toolCalls": tcs,
                             "completed": st_status == "DONE",
                             "timestamp": ts_ms,
-                        })
+                        }
+                        if messages and str(messages[-1].get("id") or "") == a_msg["id"]:
+                            messages[-1] = a_msg
+                        else:
+                            messages.append(a_msg)
 
                 elif stype == "GENERIC":
                     res_out = str(step.get("content") or "").strip()
@@ -4690,20 +4726,23 @@ def read_local_conversation_detail(cid: str, cfg: dict, limit_steps: int = 180) 
     if saved_custom and isinstance(saved_custom.get("messages"), list):
         for cm in saved_custom["messages"]:
             if isinstance(cm, dict) and str(cm.get("id") or "").startswith(("u_", "a_")):
+                cm_clean = _sanitize_companion_text(str(cm.get("content") or "").strip())
                 already = any(
-                    m.get("role") == cm.get("role") and str(m.get("content") or "").strip() == str(cm.get("content") or "").strip()
-                    for m in messages[-6:]
+                    m.get("role") == cm.get("role")
+                    and _sanitize_companion_text(str(m.get("content") or "").strip()) == cm_clean
+                    for m in messages
                 )
                 if not already:
                     messages.append(cm)
 
     opt = _optimistic_convs.get(cid)
     if opt and (time.time() - float(opt.get("createdAt") or 0)) < 45.0:
-        opt_prompt = str(opt.get("prompt") or "").strip()
+        opt_prompt = _sanitize_companion_text(str(opt.get("prompt") or "").strip())
         opt_media = list(opt.get("media") or [])
         already = any(
-            m.get("role") == "user" and str(m.get("content") or "").strip() == opt_prompt
-            for m in messages[-6:]
+            m.get("role") == "user"
+            and _sanitize_companion_text(str(m.get("content") or "").strip()) == opt_prompt
+            for m in messages
         )
         if (opt_prompt or opt_media) and not already:
             opt_msg: dict = {
@@ -5704,10 +5743,13 @@ class CompanionRequestHandler(http.server.BaseHTTPRequestHandler):
 
             while True:
                 opcode, payload = ws_read_frame(self.request)
-                if opcode is None or opcode == 0x8:  # Close
+                if opcode is None:
                     break
-                if opcode == 0x9:  # Ping
-                    ws_send_frame(client, payload.decode("utf-8", errors="ignore"), opcode=0xA)
+                if opcode == 0x8:  # Close — echo close payload per RFC 6455
+                    ws_send_frame(client, payload, opcode=0x8)
+                    break
+                if opcode == 0x9:  # Ping — echo raw binary payload bytes
+                    ws_send_frame(client, payload, opcode=0xA)
                     continue
                 if opcode == 0x1:  # Text frame
                     try:

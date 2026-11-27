@@ -1,10 +1,17 @@
-# 🛡️ Antigravity Mobile Companion v2.4 — Dual-Engine Antigravity IDE + ChatGPT PC (Codex Desktop) + Đồng Bộ WebSocket Realtime + Tự Host Bảo Mật 100%
+# 🛡️ Antigravity Mobile Companion v2.5 — Dual-Engine Antigravity IDE + ChatGPT PC (Codex Desktop) + Đồng Bộ WebSocket Realtime + Tự Host Bảo Mật 100%
 
-> **Điều khiển trực tiếp cả hai ứng dụng Antigravity Desktop VÀ ChatGPT PC (Codex Desktop) đang mở trên máy PC của bạn từ Điện thoại / Máy tính bảng / Laptop qua Wi-Fi LAN, Tailscale VPN hoặc 4G/5G (Cloudflare Quick Tunnel miễn phí) — giao diện chuẩn Google Antigravity + ChatGPT PC trên cả Desktop (`#f9f9f8`) lẫn Mobile Web (`#1e1f1c`), đồng bộ hạn mức gói 5 giờ / hằng tuần theo thời gian thực, hỗ trợ giao việc & stream phản hồi cho cả phiên Local Codex (`01a...`) lẫn phiên Dự án Cloud/TPP (`6af...`), khóa cứng `window.visualViewport` trên iOS/Android, chống trễ/lặp lệnh (TTL + Idempotency) và 100% dữ liệu nằm trọn trên máy tính của bạn (Zero-Data-Leak).**
+> **Điều khiển trực tiếp cả hai ứng dụng Antigravity Desktop VÀ ChatGPT PC (Codex Desktop) đang mở trên máy PC của bạn từ Điện thoại / Máy tính bảng / Laptop qua Wi-Fi LAN, Tailscale VPN hoặc 4G/5G (Cloudflare Quick Tunnel miễn phí) — giao diện chuẩn Google Antigravity + ChatGPT PC trên cả Desktop (`#f9f9f8`) lẫn Mobile Web (`#1e1f1c`), đồng bộ hạn mức gói 5 giờ / hằng tuần theo thời gian thực, hỗ trợ giao việc & stream phản hồi cho cả phiên Local Codex (`01a...`) lẫn phiên Dự án Cloud/TPP (`6af...`), chống lặp prompt sửa/rewind & gõ dấu IME tiếng Việt, khóa cứng `window.visualViewport` trên iOS/Android, chống trễ/lặp lệnh (TTL + Idempotency) và 100% dữ liệu nằm trọn trên máy tính của bạn (Zero-Data-Leak).**
 
 ---
 
-## 🌟 Điểm nổi bật trên phiên bản v2.4
+## 🌟 Điểm nổi bật trên phiên bản v2.5 (Cập nhật 27/11/2026 · xem [CHANGELOG.md](CHANGELOG.md))
+
+- **✨ Mới trên v2.5.0**:
+  - **Khử trùng lặp bước `step_index` & ChatGPT > 6 bước**: Loại bỏ hoàn toàn bong bóng prompt bị lặp khi sửa/rewind hội thoại trong Antigravity IDE hoặc khi phiên ChatGPT PC chạy dài > 6 bước; tự động che bí mật (`_sanitize_companion_text`) trước khi đối chiếu.
+  - **WebSocket Ping / Close bảo toàn byte gốc (RFC 6455)**: Phản hồi chuẩn Close (`0x8`) và giữ nguyên payload nhị phân Ping (`0x9` -> `0xA`) giúp giữ kết nối bền bỉ qua 4G/5G & Cloudflare Tunnel.
+  - **Ẩn AI Subagent & `run_workflow` Worker**: Sidebar chỉ hiển thị đúng các phiên làm việc chính của bạn, không bị nhiễu bởi luồng phụ.
+  - **Gõ tiếng Việt IME chuẩn & Sao chép tự do**: Chặn gửi nhầm khi đang gõ tổ hợp dấu tiếng Việt (`isComposing` / `keyCode 229`) và cho phép bôi đen/copy tự do trên toàn khung hội thoại.
+  - **20/20 bài kiểm thử bảo mật & hồi quy đạt 100% PASS** (`python test_companion_security.py`).
 
 0. **🤖 Đồng Bộ Kép (Dual-Engine): Antigravity IDE + ChatGPT PC (Codex Desktop)**:
    - **Chuyển Đổi Tức Thì `ANTIGRAVITY` ↔ `CHATGPT`**: Đồng bộ đầy đủ danh sách **Đã ghim**, **Dự án Công việc** (`Phiên AI`, `BUSINESS`, `CLAUDE CODE`, `LUYỆN CỜ CODEX`...) và **Trò chuyện ChatGPT** từ `~/.codex/` (`state_5.sqlite`, `codex.db`, `codex-dev.db`, `thread_history_1.sqlite` kèm theo dõi `-wal`/`-shm` và `thread-writer-locks` realtime).
